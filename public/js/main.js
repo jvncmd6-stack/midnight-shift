@@ -2,7 +2,7 @@
   "use strict";
   const { $, R, rnd, cl, vib, tgw, getUN, setUN, CFG, PG, ME, TABS, TAB_KEYS, SKIN, HAIR, CLR, CAT, PRE, LOCK, ok, owned, rav, saveCfg, toast, openSheet, closeSheet, T, MW, MH, QUICK_CHATS } = W.MS_CFG;
   const { spr } = W.MS_SPR;
-  const { wc, lc, LW, LH, GL, BULBS, blocked, drawSky, drawAvatarLabel, drawPropSprite, drawMinimap, stepStreetTraffic, renderStreetLayer, renderStreetLights } = W.MS_WORLD;
+  const { wc, lc, LW, LH, GL, BULBS, blocked, lobbyBlocked, drawSky, drawAvatarLabel, drawPropSprite, drawMinimap, stepStreetTraffic, renderStreetLayer, renderStreetLights } = W.MS_WORLD;
   const { openTaskModal } = W.MS_TASKS;
   const { audioOn, applyAudioCfg, MU } = W.MS_AUDIO;
   const NET = W.MS_NET;
@@ -386,8 +386,12 @@
 
     const nearTerm = (snap.terminals || []).find((t) => !t.done && Math.hypot(t.x - me.x, t.z - me.z) < 2.2);
     if (nearTerm) {
-      if (me.team === "TRAITOR") NET.sendPlayerAction("SABOTAGE", { termIdx: nearTerm.idx });
-      else openTaskModal(nearTerm.k, me.role === "TECHNICIAN", () => NET.sendPlayerAction("TASK_DONE", { termIdx: nearTerm.idx }));
+      if (me.team === "TRAITOR") {
+        NET.sendPlayerAction("SABOTAGE", { termIdx: nearTerm.idx });
+      } else {
+        const taskType = nearTerm.type || nearTerm.k || "keypad";
+        openTaskModal(taskType, me.role === "TECHNICIAN", () => NET.sendPlayerAction("TASK_DONE", { termIdx: nearTerm.idx }));
+      }
       return;
     }
     if (Math.hypot(32 - me.x, 22 - me.z) < 2.4) {
@@ -455,8 +459,10 @@
       const l = Math.hypot(ix, iy);
       LM.mv = l > 0.15;
       if (LM.mv) {
-        LM.x = cl(LM.x + (ix / l) * 4.2 * dt, 1.5, 46.5);
-        LM.z = cl(LM.z + (iy / l) * 4.2 * dt, 10.9, 29.3);
+        const nx = LM.x + (ix / l) * 4.2 * dt;
+        const nz = LM.z + (iy / l) * 4.2 * dt;
+        if (!lobbyBlocked(nx, LM.z)) LM.x = nx;
+        if (!lobbyBlocked(LM.x, nz)) LM.z = nz;
         LM.wd += 4.2 * dt;
         LM.dir = Math.abs(ix) > Math.abs(iy) ? (ix > 0 ? 2 : 3) : (iy > 0 ? 0 : 1);
       }
@@ -547,13 +553,13 @@
         p.z += (p.tz - p.z) * 0.25;
         drawList.push({
           y: p.z,
-          f: () => drawAvatarLabel(ctx, p.avatar, p.x * T - camX, p.z * T - camY, p.dir, 0, p.name, "#fff", p.jy)
+          f: () => drawAvatarLabel(ctx, p.avatar, p.x * T - camX, p.z * T - camY, p.dir, 0, p.name, "#fff", p.jy, p.em)
         });
       });
       const fr = LM.mv ? [1, 0, 2, 0][Math.floor(LM.wd * 2.2) % 4] : 0;
       drawList.push({
         y: LM.z,
-        f: () => drawAvatarLabel(ctx, ME, LM.x * T - camX, LM.z * T - camY, LM.dir, fr, getUN(), "#ffd23f", LM.jy)
+        f: () => drawAvatarLabel(ctx, ME, LM.x * T - camX, LM.z * T - camY, LM.dir, fr, getUN(), "#ffd23f", LM.jy, LM.em)
       });
     } else if (snap) {
       const wf = (Math.floor(tclock * 8) % 2) + 1;
@@ -565,7 +571,7 @@
           f: () => {
             const px = e.x * T - camX, py = e.z * T - camY;
             if (e.disguised && e.propType) drawPropSprite(ctx, e.propType, px, py);
-            else drawAvatarLabel(ctx, e.avatar || ME, px, py, e.dir || 0, wf, e.name, e.team === "GUARD" ? "#ff5d6c" : "#fff");
+            else drawAvatarLabel(ctx, e.avatar || ME, px, py, e.dir || 0, wf, e.name, e.team === "GUARD" ? "#ff5d6c" : "#fff", 0, e.em || 0);
           }
         });
       });
@@ -622,18 +628,24 @@
         }
       });
 
-      const px2 = snap.you.x * T - camX, py2 = snap.you.z * T - camY - 6;
+      const px2 = Math.round(snap.you.x * T - camX);
+      const py2 = Math.round(snap.you.z * T - camY - 8);
+      const rad = [74, 96, 124][CFG.br] || 74;
+
       dx.globalCompositeOperation = "source-over";
       dx.clearRect(0, 0, VW, VH);
-      dx.fillStyle = `rgba(4,6,20,${[0.84, 0.68, 0.50][CFG.br]})`;
+      dx.fillStyle = `rgba(4,6,20,${[0.78, 0.56, 0.32][CFG.br] ?? 0.78})`;
       dx.fillRect(0, 0, VW, VH);
+
       dx.globalCompositeOperation = "destination-out";
-      [62, 46, 30].forEach((r, idx) => {
-        dx.fillStyle = `rgba(0,0,0,${0.25 + idx * 0.25})`;
-        dx.beginPath();
-        dx.arc(px2, py2, r, 0, 6.3);
-        dx.fill();
-      });
+      const grad = dx.createRadialGradient(px2, py2, rad * 0.38, px2, py2, rad);
+      grad.addColorStop(0, "rgba(0,0,0,1)");
+      grad.addColorStop(0.7, "rgba(0,0,0,0.65)");
+      grad.addColorStop(1, "rgba(0,0,0,0)");
+      dx.fillStyle = grad;
+      dx.beginPath();
+      dx.arc(px2, py2, rad, 0, Math.PI * 2);
+      dx.fill();
       ctx.drawImage(dm, 0, 0);
     }
   }
