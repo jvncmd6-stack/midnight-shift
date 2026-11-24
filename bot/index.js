@@ -3,6 +3,7 @@
 const { Bot, InlineKeyboard } = require("grammy");
 const { PHASE } = require("../packages/shared/protocol");
 const { upsertUser, getLeaderboard, checkRateLimit } = require("../server/db");
+const { registerAdminCommands } = require("./admin");
 
 const BOT_TOKEN = process.env.BOT_TOKEN || "";
 const BOT_USERNAME = process.env.BOT_USERNAME || "";
@@ -21,13 +22,16 @@ function buildMiniAppLink(startParam = "") {
   return WEBAPP_URL || "https://t.me";
 }
 
-function createTelegramBot(roomManager) {
+function createTelegramBot(roomManager, io) {
   if (!BOT_TOKEN) {
     console.warn("[Bot] BOT_TOKEN kosong, fitur bot Telegram dinonaktifkan.");
     return null;
   }
 
   const bot = new Bot(BOT_TOKEN);
+
+  // Daftarkan semua perintah khusus Admin (/admin, /givecoin, /broadcast, /closeroom, /ban, /unban)
+  registerAdminCommands(bot, roomManager, io);
 
   // /start [room_CODE]
   bot.command("start", async (ctx) => {
@@ -64,6 +68,10 @@ function createTelegramBot(roomManager) {
       username: ctx.from.username || "",
       displayName: ctx.from.first_name || "Pemain"
     });
+
+    if (user.isBanned) {
+      return ctx.reply("🚫 Akun kamu telah diblokir oleh Admin.");
+    }
 
     if (!isGroup) {
       const { room } = roomManager.createRoom({ hostUser: user, mode: "CLASSIC", isPublic: false });
@@ -260,7 +268,6 @@ async function updateGroupCardNow(bot, room, matchResult) {
       reply_markup: kb
     });
   } catch (err) {
-    // Abaikan error "message is not modified"
     if (!String(err.message).includes("message is not modified")) {
       console.warn("[Group Card Edit]", err.message);
     }
