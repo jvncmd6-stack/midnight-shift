@@ -300,16 +300,53 @@
   });
   addEventListener("keyup", (e) => { const q = e.key.toLowerCase(); delete keys[q]; if (AR[q]) delete keys[AR[q]]; });
 
+const LV = ["MATI", "PELAN", "SEDANG", "KERAS"];
+  const SGN = ["OTOMATIS", "MIDNIGHT CITY", "SEMBUNYI", "LOBI SANTAI", "KEJAR-KEJARAN"];
+
   function openSet() {
-    $("sb").innerHTML = `<div class="lab">KECERAHAN MAP</div><div class="rw">` +
-      ["NORMAL", "TERANG", "SANGAT TERANG"].map((l, i) => `<button class="chip${CFG.br === i ? " on" : ""}" data-br="${i}">${l}</button>`).join("") +
-      `</div>`;
+    W.MS_AUDIO.audioOn();
+    const chp = (key, arr) =>
+      arr.map((l, i) => `<button class="chip${CFG[key] === i ? " on" : ""}" data-s="${key}" data-v="${i}">${l}</button>`).join("");
+    const sec = (l, x) => `<div class="lab">${l}</div><div class="rw">${x}</div>`;
+
+    $("sb").innerHTML =
+      sec("NAMA KARAKTER", `<input class="ni" id="setNm" maxlength="12" value="${getUN()}">`) +
+      sec("GETAR", chp("vib", ["MATI", "NYALA"])) +
+      sec("EFEK SUARA", chp("sfx", LV)) +
+      sec("VOLUME MUSIK", chp("mus", LV)) +
+      sec("PILIHAN LAGU", chp("song", SGN)) +
+      sec("KECERAHAN MAP", chp("br", ["NORMAL", "TERANG", "SANGAT TERANG"])) +
+      `<div class="kh" style="margin:8px 0">OTOMATIS: LOBI SANTAI, SEMBUNYI SAAT MAIN, KEJAR-KEJARAN SAAT SATPAM DEKAT</div>` +
+      `<button class="pb d" id="sr">RESET PENGATURAN</button>`;
+
     $("set").classList.remove("hide");
-    document.querySelectorAll("#sb .chip[data-br]").forEach((b) => {
-      b.onclick = () => { CFG.br = +b.dataset.br; saveCfg(); openSet(); };
+
+    $("setNm").oninput = (e) => {
+      setUN(e.target.value);
+      $("who").textContent = tgw ? `Masuk sebagai ${getUN()}` : `Halo, ${getUN()}`;
+    };
+
+    document.querySelectorAll("#sb .chip[data-s]").forEach((b) => {
+      b.onclick = () => {
+        CFG[b.dataset.s] = +b.dataset.v;
+        W.MS_AUDIO.applyAudioCfg();
+        if (b.dataset.s === "vib") vib(60);
+        if (b.dataset.s === "song" || b.dataset.s === "mus") W.MS_AUDIO.MU.force = 1;
+        openSet();
+      };
     });
+
+    $("sr").onclick = () => {
+      Object.assign(CFG, { vib: 1, sfx: 2, mus: 2, song: 0, br: 0 });
+      W.MS_AUDIO.MU.force = 1;
+      W.MS_AUDIO.applyAudioCfg();
+      openSet();
+    };
   }
-  $("sx").onclick = () => $("set").classList.add("hide");
+  $("sx").onclick = () => {
+    $("set").classList.add("hide");
+    if ($("cn")) $("cn").value = getUN();
+  };
 
   /* ---------- Main Loop ---------- */
   let last = performance.now(), netSendAcc = 0;
