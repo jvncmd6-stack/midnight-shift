@@ -63,14 +63,14 @@
 
     // Detail Bawahan
     if (a.bot === 1 || a.bot === 8) { r(bc, S ? 4 : 3, 17, S ? 8 : 10, 3); r(sh(bc, -25), S ? 4 : 3, 19, S ? 8 : 10, 1); }
-    if (a.bot === 8 && !S) { r("#111", 5, 17, 1, 3); r("#111", 10, 17, 1, 3); r("#fff", 7, 18, 2, 1); } // Rok Tartan Punk
+    if (a.bot === 8 && !S) { r("#111", 5, 17, 1, 3); r("#111", 10, 17, 1, 3); r("#fff", 7, 18, 2, 1); }
     if (a.bot === 2) { if (S) r(bc, 6, 18, 4, 3); else { r(bc, 5, 18, 3, 3); r(bc, 8, 18, 3, 3); } }
     if (a.bot === 4) r(bc, S ? 5 : 4, 17, S ? 6 : 8, 2);
     if (a.bot === 3) { r(sh(bc, -35), S ? 7 : 5, 20, 2, 2); r(sh(bc, -35), 9, 20, S ? 0 : 2, 2); }
-    if (a.bot === 7 && !S) { r(sk, 6, 20 + l1, 1, 1); r(sk, 9, 21 + l2, 1, 1); } // Jeans Sobek Punk
-    if (a.bot === 9 && !S) { r("#111", 6, 19, 1, 4); r("#111", 9, 19, 1, 4); } // Celana Tartan Punk
-    if (a.bot === 10) { r("#fff", S ? 6 : 5, 22 + l1, S ? 4 : 6, 1); } // List bulu Celana Santa
-    if (a.bot === 15 && !S) { r(bc, 5, 14, 1, 4); r(bc, 10, 14, 1, 4); r(bc, 5, 16, 6, 2); } // Overall
+    if (a.bot === 7 && !S) { r(sk, 6, 20 + l1, 1, 1); r(sk, 9, 21 + l2, 1, 1); }
+    if (a.bot === 9 && !S) { r("#111", 6, 19, 1, 4); r("#111", 9, 19, 1, 4); }
+    if (a.bot === 10) { r("#fff", S ? 6 : 5, 22 + l1, S ? 4 : 6, 1); }
+    if (a.bot === 15 && !S) { r(bc, 5, 14, 1, 4); r(bc, 10, 14, 1, 4); r(bc, 5, 16, 6, 2); }
 
     // Dress / Gaun panjang
     if (a.shirt === 5 || a.shirt === 13) {
@@ -82,10 +82,10 @@
     // Badan & Baju (Casual, Natal, Punk)
     const bx = S ? 5 : 4, bw = S ? 6 : 8;
     let bodyCol = sc;
-    if (a.shirt === 9) bodyCol = "#c92a38"; // Sweater Natal Merah
-    if (a.shirt === 10 || a.shirt === 11) bodyCol = "#1e1d26"; // Jaket/Kaos Punk Hitam
-    if (a.shirt === 12 || a.shirt === 13) bodyCol = "#d92b3a"; // Baju/Dress Santa
-    if (a.shirt === 16) bodyCol = "#2e8b4e"; // Baju Elf Natal Hijau
+    if (a.shirt === 9) bodyCol = "#c92a38";
+    if (a.shirt === 10 || a.shirt === 11) bodyCol = "#1e1d26";
+    if (a.shirt === 12 || a.shirt === 13) bodyCol = "#d92b3a";
+    if (a.shirt === 16) bodyCol = "#2e8b4e";
     r(bodyCol, bx, 12, bw, 6);
 
     if (S) {
@@ -102,18 +102,18 @@
     }
 
     // Motif Khusus Baju
-    if (a.shirt === 3) { r(sh(sc, -25), bx, 11, bw, 2); } // Hoodie
-    if (a.shirt === 4 && !S) { r("#fff", 6, 12, 4, 1); r(sh(sc, -35), 7, 13, 1, 5); } // Flanel
-    if (a.shirt === 7) { r("#fff", bx, 14, bw, 1); r("#fff", bx, 16, bw, 1); } // Jersey
-    if (a.shirt === 8) { for (let q = 12; q < 18; q += 2) r(sh(sc, -45), bx, q, bw, 1); } // Kaos Garis
-    if (a.shirt === 9 && !S) { r("#2e8b4e", 5, 14, 6, 2); r("#fff", 6, 13, 1, 1); r("#fff", 9, 13, 1, 1); r("#ffd23f", 7, 14, 2, 2); } // Sweater Natal
-    if (a.shirt === 10 && !S) { r("#aeb7c7", 5, 12, 1, 1); r("#aeb7c7", 10, 12, 1, 1); r("#aeb7c7", 6, 14, 4, 1); r("#d92b3a", 7, 15, 2, 2); } // Jaket Kulit Punk
-    if (a.shirt === 11 && !S) { r("#fff", 7, 13, 2, 2); r("#ff5d6c", 6, 15, 4, 1); } // Kaos Punk
-    if (a.shirt === 12) { r("#fff", 7, 12, 2, 5); r("#111", bx, 16, bw, 1); r("#ffd23f", 7, 16, 2, 1); } // Baju Santa
-    if (a.shirt === 13 && !S) { r("#fff", 6, 12, 4, 1); r("#111", bx, 15, bw, 1); } // Dress Natal
-    if (a.shirt === 15 && !S) { r("#3b6ab8", 4, 12, 2, 6); r("#3b6ab8", 10, 12, 2, 6); r("#fff", 6, 12, 4, 6); } // Rompi Denim
-    if (a.shirt === 16 && !S) { r("#d92b3a", 5, 12, 6, 1); r("#ffd23f", 7, 14, 2, 2); } // Baju Elf Natal
-    if (a.shirt === 17 && !S) { r("#fff", 7, 12, 2, 3); r("#d92b3a", 7, 13, 2, 2); } // Jas Kantor
+    if (a.shirt === 3) { r(sh(sc, -25), bx, 11, bw, 2); }
+    if (a.shirt === 4 && !S) { r("#fff", 6, 12, 4, 1); r(sh(sc, -35), 7, 13, 1, 5); }
+    if (a.shirt === 7) { r("#fff", bx, 14, bw, 1); r("#fff", bx, 16, bw, 1); }
+    if (a.shirt === 8) { for (let q = 12; q < 18; q += 2) r(sh(sc, -45), bx, q, bw, 1); }
+    if (a.shirt === 9 && !S) { r("#2e8b4e", 5, 14, 6, 2); r("#fff", 6, 13, 1, 1); r("#fff", 9, 13, 1, 1); r("#ffd23f", 7, 14, 2, 2); }
+    if (a.shirt === 10 && !S) { r("#aeb7c7", 5, 12, 1, 1); r("#aeb7c7", 10, 12, 1, 1); r("#aeb7c7", 6, 14, 4, 1); r("#d92b3a", 7, 15, 2, 2); }
+    if (a.shirt === 11 && !S) { r("#fff", 7, 13, 2, 2); r("#ff5d6c", 6, 15, 4, 1); }
+    if (a.shirt === 12) { r("#fff", 7, 12, 2, 5); r("#111", bx, 16, bw, 1); r("#ffd23f", 7, 16, 2, 1); }
+    if (a.shirt === 13 && !S) { r("#fff", 6, 12, 4, 1); r("#111", bx, 15, bw, 1); }
+    if (a.shirt === 15 && !S) { r("#3b6ab8", 4, 12, 2, 6); r("#3b6ab8", 10, 12, 2, 6); r("#fff", 6, 12, 4, 6); }
+    if (a.shirt === 16 && !S) { r("#d92b3a", 5, 12, 6, 1); r("#ffd23f", 7, 14, 2, 2); }
+    if (a.shirt === 17 && !S) { r("#fff", 7, 12, 2, 3); r("#d92b3a", 7, 13, 2, 2); }
 
     // Kepala & Wajah
     if (S) {
@@ -150,8 +150,8 @@
     }
     if (hs === 3) { r(hc, 4, -1, 2, 2); r(hc, 7, -2, 2, 3); r(hc, 10, -1, 2, 2); }
     if (hs === 4) r(hc, 6, -2, 4, 3);
-    if (hs === 12) { r("#ff5d6c", 7, -3, 2, 4); r("#ffd23f", 7, -4, 2, 1); } // Mohawk Punk
-    if (hs === 17) { r(hc, 5, -2, 6, 3); } // Pompadour
+    if (hs === 12) { r("#ff5d6c", 7, -3, 2, 4); r("#ffd23f", 7, -4, 2, 1); }
+    if (hs === 17) { r(hc, 5, -2, 6, 3); }
 
     // Aksesori (18 Varian termasuk Natal & Punk)
     const G = "#222";
@@ -166,15 +166,15 @@
     if (a.acc === 6) { r(ac, 3, 0, S ? 9 : 10, 4); r("#fff", 6, -1, 3, 1); }
     if (a.acc === 7) { r(CLR[2], 3, 2, S ? 9 : 10, 2); }
     if (a.acc === 8) { r("#ffd23f", S ? 7 : 3, 9, 1, 2); if (!S) r("#ffd23f", 12, 9, 1, 2); }
-    if (a.acc === 9) { r("#d92b3a", S ? 5 : 4, 11, S ? 6 : 8, 2); r("#2e8b4e", S ? 6 : 5, 11, 2, 2); if (!B && !S) r("#d92b3a", 5, 13, 2, 4); } // Syal Natal
+    if (a.acc === 9) { r("#d92b3a", S ? 5 : 4, 11, S ? 6 : 8, 2); r("#2e8b4e", S ? 6 : 5, 11, 2, 2); if (!B && !S) r("#d92b3a", 5, 13, 2, 4); }
     if (a.acc === 10 && !B) { r("#111", 4, 5, 3, 3); r("#111", 9, 5, 3, 3); r("#111", 7, 5, 2, 1); }
     if (a.acc === 11) { r("#ff7a8a", S ? 5 : 10, 2, 2, 2); r("#ffd23f", S ? 5 : 10, 2, 1, 1); }
-    if (a.acc === 12) { r("#d92b3a", 4, -2, 8, 3); r("#fff", 3, 1, 10, 2); r("#fff", 11, -2, 2, 2); } // Topi Santa
-    if (a.acc === 13) { r("#8b5a2b", 4, -3, 1, 4); r("#8b5a2b", 3, -2, 3, 1); r("#8b5a2b", 11, -3, 1, 4); r("#8b5a2b", 10, -2, 3, 1); } // Tanduk Rusa Natal
-    if (a.acc === 14 && !B) { r("#111", S ? 5 : 4, 11, S ? 6 : 8, 1); r("#d8dce6", S ? 6 : 5, 11, 1, 1); r("#d8dce6", S ? 8 : 8, 11, 1, 1); r("#d8dce6", 7, 13, 2, 2); } // Rantai & Choker Punk
-    if (a.acc === 15 && !B) { r("#5cc8ff", 4, 2, 3, 2); r("#5cc8ff", 9, 2, 3, 2); r("#333", 3, 2, 10, 1); } // Goggles Punk
-    if (a.acc === 16) { r("#ffd23f", 5, -2, 6, 2); r("#ffd23f", 5, -3, 1, 1); r("#ffd23f", 8, -3, 1, 1); r("#ffd23f", 10, -3, 1, 1); } // Mahkota Kecil
-    if (a.acc === 17) { r("#2e8b4e", 3, 0, 10, 4); r("#d92b3a", 3, 3, 10, 1); r("#fff", 6, -2, 3, 2); } // Kupluk Natal
+    if (a.acc === 12) { r("#d92b3a", 4, -2, 8, 3); r("#fff", 3, 1, 10, 2); r("#fff", 11, -2, 2, 2); }
+    if (a.acc === 13) { r("#8b5a2b", 4, -3, 1, 4); r("#8b5a2b", 3, -2, 3, 1); r("#8b5a2b", 11, -3, 1, 4); r("#8b5a2b", 10, -2, 3, 1); }
+    if (a.acc === 14 && !B) { r("#111", S ? 5 : 4, 11, S ? 6 : 8, 1); r("#d8dce6", S ? 6 : 5, 11, 1, 1); r("#d8dce6", S ? 8 : 8, 11, 1, 1); r("#d8dce6", 7, 13, 2, 2); }
+    if (a.acc === 15 && !B) { r("#5cc8ff", 4, 2, 3, 2); r("#5cc8ff", 9, 2, 3, 2); r("#333", 3, 2, 10, 1); }
+    if (a.acc === 16) { r("#ffd23f", 5, -2, 6, 2); r("#ffd23f", 5, -3, 1, 1); r("#ffd23f", 8, -3, 1, 1); r("#ffd23f", 10, -3, 1, 1); }
+    if (a.acc === 17) { r("#2e8b4e", 3, 0, 10, 4); r("#d92b3a", 3, 3, 10, 1); r("#fff", 6, -2, 3, 2); }
 
     outline(c);
     return c;
@@ -186,8 +186,23 @@
     return a.sp[k] || (a.sp[k] = mkChar(a, dir, fr));
   }
 
-  const PD = { cone: [12, 10], galon: [12, 18], pot: [12, 12], drum: [16, 20], speaker: [16, 22], palet: [22, 14] };
-  const PN = { cone: "Cone Parkir", galon: "Dispenser", pot: "Pot Tanaman", drum: "Tong Sampah", speaker: "Printer", palet: "Sofa" };
+  /* ---------- Props Resolusi Tinggi (HD Pixel) ---------- */
+  const PD = {
+    cone: [20, 22],
+    galon: [22, 32],
+    pot: [24, 26],
+    drum: [24, 30],
+    speaker: [26, 32],
+    palet: [34, 24]
+  };
+  const PN = {
+    cone: "Cone Parkir",
+    galon: "Dispenser Air",
+    pot: "Pot Tanaman",
+    drum: "Tong Besi",
+    speaker: "Mesin Printer",
+    palet: "Sofa Kantor"
+  };
   const PC = {};
 
   function prop(t) {
@@ -200,12 +215,82 @@
     X.translate(1, 1);
     const r = (col, x, y, w, h) => { X.fillStyle = col; X.fillRect(x, y, w, h); };
 
-    if (t === "cone") { r("#ff7a1a", 5, 0, 2, 2); r("#ff7a1a", 4, 2, 4, 3); r("#ff7a1a", 3, 5, 6, 2); r("#fff", 4, 3, 4, 1); r("#fff", 3, 6, 6, 1); r("#333", 1, 7, 10, 3); }
-    if (t === "galon") { r("#2d6cdf", 4, 0, 4, 2); r("#bfe6ff", 3, 2, 6, 2); r("#58a6ff", 1, 4, 10, 13); r("#cfeaff", 2, 5, 2, 9); r("#2d6cdf", 1, 9, 10, 1); r("#2d6cdf", 1, 16, 10, 2); }
-    if (t === "pot") { r("#3fae5a", 3, 0, 2, 4); r("#3fae5a", 6, 0, 3, 5); r("#2e8a45", 5, 2, 2, 3); r("#c0603a", 2, 5, 8, 6); r("#d9794c", 1, 5, 10, 2); }
-    if (t === "drum") { r("#8a93a4", 2, 2, 12, 17); r("#aeb7c7", 1, 0, 14, 3); r("#6a7384", 2, 9, 12, 1); r("#222", 4, 5, 8, 2); r("#c9d1e0", 3, 4, 2, 13); }
-    if (t === "speaker") { r("#fff", 3, 1, 10, 5); r("#d8dce6", 0, 6, 16, 16); r("#aab0c0", 0, 6, 16, 3); r("#2a3550", 2, 11, 12, 4); r("#5cc8ff", 3, 12, 4, 2); r("#8a90a0", 1, 18, 14, 2); }
-    if (t === "palet") { r("#2d4a8a", 1, 0, 20, 6); r("#3a5aa8", 0, 5, 22, 7); r("#1e3366", 0, 5, 22, 1); r("#4a6ab8", 3, 6, 7, 4); r("#4a6ab8", 12, 6, 7, 4); r("#222", 1, 12, 2, 2); r("#222", 19, 12, 2, 2); }
+    if (t === "cone") {
+      r("#d9531e", 8, 1, 4, 3);
+      r("#ff7a1a", 7, 4, 6, 4);
+      r("#ffffff", 6, 8, 8, 3);
+      r("#d8e2f0", 11, 8, 3, 3);
+      r("#ff7a1a", 5, 11, 10, 4);
+      r("#d9531e", 11, 11, 4, 4);
+      r("#ffffff", 4, 15, 12, 3);
+      r("#2b2d3c", 2, 18, 16, 4);
+      r("#45485e", 3, 18, 10, 2);
+    }
+    if (t === "galon") {
+      r("#1d4ed8", 8, 0, 6, 2);
+      r("#93c5fd", 6, 2, 10, 2);
+      r("#3b82f6", 5, 4, 12, 11);
+      r("#60a5fa", 6, 5, 4, 9);
+      r("#dbeafe", 7, 6, 2, 7);
+      r("#2563eb", 5, 9, 12, 1);
+      r("#e2e8f0", 4, 15, 14, 16);
+      r("#cbd5e1", 13, 15, 5, 16);
+      r("#334155", 6, 18, 10, 6);
+      r("#ef4444", 7, 20, 2, 3);
+      r("#3b82f6", 13, 20, 2, 3);
+      r("#1e293b", 4, 30, 14, 2);
+    }
+    if (t === "pot") {
+      r("#15803d", 9, 1, 6, 6);
+      r("#22c55e", 5, 4, 14, 7);
+      r("#4ade80", 7, 5, 5, 4);
+      r("#166534", 13, 5, 6, 6);
+      r("#15803d", 8, 9, 8, 4);
+      r("#ea580c", 4, 13, 16, 3);
+      r("#fb923c", 5, 13, 8, 2);
+      r("#c2410c", 6, 16, 12, 9);
+      r("#9a3412", 13, 16, 5, 9);
+      r("#451a03", 7, 25, 10, 1);
+    }
+    if (t === "drum") {
+      r("#475569", 3, 2, 18, 26);
+      r("#64748b", 4, 3, 8, 24);
+      r("#94a3b8", 6, 4, 3, 22);
+      r("#1e293b", 2, 1, 20, 3);
+      r("#cbd5e1", 3, 1, 10, 1);
+      r("#1e293b", 2, 10, 20, 2);
+      r("#1e293b", 2, 20, 20, 2);
+      r("#1e293b", 2, 27, 20, 3);
+      r("#facc15", 10, 14, 4, 4);
+    }
+    if (t === "speaker") {
+      r("#f8fafc", 6, 1, 14, 7);
+      r("#cbd5e1", 8, 3, 10, 1);
+      r("#cbd5e1", 8, 5, 8, 1);
+      r("#e2e8f0", 2, 8, 22, 22);
+      r("#94a3b8", 18, 8, 6, 22);
+      r("#cbd5e1", 2, 8, 22, 4);
+      r("#0f172a", 4, 14, 12, 5);
+      r("#38bdf8", 5, 15, 6, 3);
+      r("#22c55e", 13, 15, 2, 1);
+      r("#ef4444", 13, 17, 2, 1);
+      r("#64748b", 4, 21, 16, 7);
+      r("#334155", 9, 23, 6, 2);
+      r("#1e293b", 3, 30, 20, 2);
+    }
+    if (t === "palet") {
+      r("#1e3a8a", 2, 1, 30, 9);
+      r("#2563eb", 3, 2, 28, 7);
+      r("#3b82f6", 5, 3, 11, 5);
+      r("#3b82f6", 18, 3, 11, 5);
+      r("#1d4ed8", 0, 8, 34, 12);
+      r("#60a5fa", 4, 9, 12, 6);
+      r("#60a5fa", 18, 9, 12, 6);
+      r("#1e3a8a", 0, 8, 4, 12);
+      r("#1e3a8a", 30, 8, 4, 12);
+      r("#451a03", 3, 20, 3, 4);
+      r("#451a03", 28, 20, 3, 4);
+    }
 
     outline(c);
     return (PC[t] = c);
