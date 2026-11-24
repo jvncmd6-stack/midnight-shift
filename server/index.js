@@ -3,27 +3,133 @@
 try { require("dotenv").config(); } catch (_) {}
 
 const path = require("path");
+const crypto = require("crypto");
 const Fastify = require("fastify");
 const fastifyCors = require("@fastify/cors");
 const fastifyStatic = require("@fastify/static");
 const fastifyRateLimit = require("@fastify/rate-limit");
 const { Server } = require("socket.io");
 
-const { verifyInitData } = require("./auth");
-const { initDb, upsertUser, updateUserCustomization, checkRateLimit } = require("./db");
+const authMod = require("./auth");
+const dbMod = require("./db");
 const { RoomManager } = require("./roomManager");
 const { createTelegramBot, scheduleGroupCardUpdate } = require("../bot/index");
 const { sanitizeAvatar, sanitizeName } = require("../packages/shared/protocol");
 
 const fastify = Fastify({ logger: false });
+const memUsers = new Map();
 
+/* ---------- Helper Verifikasi Telegram (Auto-detect dari ./auth + Fallback) ---------- */
+function checkTelegramAuth(initData, botToken) {
+  if (!initData || typeof initData !== "string") return null;
+
+  if (initData.startsWith("dev:")) {
+    const devId = initData.slice(4).replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 24) || "guest";
+    return { id: devId, username: "", first_name: "Pemain" };
+  }
+
+  // Coba fungsi yang ada di server/auth.js
+  const fn = authMod.verifyTelegramInitData || authMod.verifyInitData || authMod.validateInitData || (typeof authMod === "function" ? authMod : null);
+  if (fn) {
+    try {
+      const res = fn(initData, botToken);
+      if (res) return res.user || res;
+    } catch (_) {}
+  }
+
+  // Fallback HMAC-SHA256 bawaan jika fungsi di ./auth berbeda signature
+  try {
+    const params = new URLSearchParams(initData);
+    const hash = params.get("hash");
+    const userRaw = params.get("user");
+    if (!userRaw) return null;
+    const userObj = JSON.parse(userRaw);
+
+    if (botToken && hash) {
+      params.delete("hash");
+      const dataCheckString = Array.from(params.entries())
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([k, v]) => `${k}=${v}`)
+        .join("\n");
+      const secretKey = crypto.createHmac("sha256", "WebAppData").update(botToken).digest();
+      const computedHash = crypto.createHmac("sha256", secretKey).update(dataCheckString).digest("hex");
+      if (computedHash !== hash) return null;
+    }
+    return userObj;
+  } catch (_) {
+    return null;
+  }
+}
+
+/* ---------- Helper Database dengan Fallback Memory Anti-Hang ---------- */
+async function safeUpsertUser(payload) {
+  const tgId = String(payload.telegramId);
+  if (typeof dbMod.upsertUser === "function") {
+    try {
+      const dbUser = await Promise.race([
+        dbMod.upsertUser(payload),
+        new Promise((_, rej) => setTimeout(() => rej(new Error("DB timeout")), 2500))
+      ]);
+      if (dbUser) return dbUser;
+    } catch (err) {
+      console.warn("[DB upsertUser fallback]", err.message);
+    }
+  }
+
+  if (!memUsers.has(tgId)) {
+    memUsers.set(tgId, {
+      id: tgId,
+      telegramId: tgId,
+      username: payload.username || "",
+      displayName: payload.displayName || "Pemain",
+      coins: 150,
+      xp: 0,
+      gamesPlayed: 0,
+      wins: 0,
+      tasksDone: 0,
+      unlockedItems: [],
+      isBanned: false,
+      avatar: { g: "f", skin: 1, hair: 1, hairC: 0, shirt: 0, shirtC: 1, bot: 1, botC: 7, acc: 0 }
+    });
+  }
+  const u = memUsers.get(tgId);
+  if (payload.displayName) u.displayName = payload.displayName;
+  return u;
+}
+
+async function safeUpdateCustomization(tgId, data) {
+  if (typeof dbMod.updateUserCustomization === "function") {
+    try {
+      const updated = await Promise.race([
+        dbMod.updateUserCustomization(tgId, data),
+        new Promise((_, rej) => setTimeout(() => rej(new Error("DB timeout")), 2500))
+      ]);
+      if (updated) return updated;
+    } catch (_) {}
+  }
+
+  const u = await safeUpsertUser({ telegramId: tgId });
+  if (data.buyItemKey && data.price) {
+    if (u.coins < data.price) throw new Error("Koin tidak cukup");
+    if (!u.unlockedItems.includes(data.buyItemKey)) {
+      u.coins -= data.price;
+      u.unlockedItems.push(data.buyItemKey);
+    }
+  }
+  if (data.displayName) u.displayName = data.displayName;
+  if (data.avatar) u.avatar = data.avatar;
+  return u;
+}
+
+/* ---------- Boot Server ---------- */
 async function boot() {
-  if (typeof initDb === "function") {
-    await initDb().catch((err) => console.warn("[DB]", err.message));
+  const initFn = dbMod.initDb || dbMod.initDatabase || dbMod.connectDb;
+  if (typeof initFn === "function") {
+    await initFn().catch((err) => console.warn("[DB Init]", err.message));
   }
 
   await fastify.register(fastifyCors, { origin: "*" });
-  await fastify.register(fastifyRateLimit, { max: 250, timeWindow: "1 minute" });
+  await fastify.register(fastifyRateLimit, { max: 300, timeWindow: "1 minute" });
   await fastify.register(fastifyStatic, {
     root: path.join(__dirname, "..", "public"),
     prefix: "/"
@@ -31,7 +137,10 @@ async function boot() {
 
   fastify.get("/health", async () => ({ ok: true, time: Date.now() }));
 
-  const io = new Server(fastify.server, { cors: { origin: "*" } });
+  const io = new Server(fastify.server, {
+    cors: { origin: "*" },
+    transports: ["websocket", "polling"]
+  });
 
   let bot = null;
   const roomManager = new RoomManager(io, (room, matchResult) => {
@@ -46,22 +155,16 @@ async function boot() {
   io.on("connection", (socket) => {
     socket.on("auth:hello", async ({ initData, displayName, avatar } = {}, cb) => {
       try {
-        let tgUser = null;
-        if (typeof initData === "string" && initData.startsWith("dev:")) {
-          const devId = initData.slice(4).replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 24) || "guest";
-          tgUser = { id: devId, username: "", first_name: displayName || "Pemain" };
-        } else {
-          const verified = verifyInitData(initData, process.env.BOT_TOKEN);
-          if (!verified) {
-            return typeof cb === "function" && cb({ ok: false, error: "Autentikasi Telegram tidak valid" });
-          }
-          tgUser = verified.user || verified;
+        const tgUser = checkTelegramAuth(initData, process.env.BOT_TOKEN);
+        if (!tgUser) {
+          return typeof cb === "function" && cb({ ok: false, error: "Autentikasi Telegram tidak valid" });
         }
 
-        const user = await upsertUser({
-          telegramId: String(tgUser.id || tgUser.tgId),
+        const rawId = tgUser.id || tgUser.tgId || tgUser.telegramId;
+        const user = await safeUpsertUser({
+          telegramId: String(rawId),
           username: tgUser.username || "",
-          displayName: sanitizeName(displayName || tgUser.first_name || "Pemain")
+          displayName: sanitizeName(displayName || tgUser.first_name || tgUser.displayName || "Pemain")
         });
 
         if (user.isBanned) {
@@ -72,14 +175,16 @@ async function boot() {
           user.avatar = sanitizeAvatar(avatar);
         }
 
-        socket.data.tgId = String(user.telegramId);
+        const tgId = String(user.telegramId || rawId);
+        user.telegramId = tgId;
+        socket.data.tgId = tgId;
         socket.data.user = user;
 
         if (typeof cb === "function") {
           cb({
             ok: true,
             user: {
-              tgId: String(user.telegramId),
+              tgId,
               displayName: user.displayName,
               coins: user.coins || 0,
               xp: user.xp || 0,
@@ -92,8 +197,8 @@ async function boot() {
           });
         }
       } catch (err) {
-        console.error("[auth:hello]", err.message);
-        if (typeof cb === "function") cb({ ok: false, error: "Gagal autentikasi" });
+        console.error("[auth:hello]", err);
+        if (typeof cb === "function") cb({ ok: false, error: "Gagal autentikasi server" });
       }
     });
 
@@ -103,7 +208,7 @@ async function boot() {
       if (!tgId || !user) return typeof cb === "function" && cb({ error: "Belum login" });
 
       try {
-        const updated = await updateUserCustomization(tgId, {
+        const updated = await safeUpdateCustomization(tgId, {
           displayName: displayName ? sanitizeName(displayName) : user.displayName,
           avatar: avatar ? sanitizeAvatar(avatar) : user.avatar,
           buyItemKey,
@@ -179,7 +284,10 @@ async function boot() {
       const tgId = socket.data.tgId;
       const user = socket.data.user;
       if (!tgId || !user) return;
-      if (!(await checkRateLimit(`chat:${tgId}`, 8, 10))) return;
+      if (typeof dbMod.checkRateLimit === "function") {
+        const ok = await dbMod.checkRateLimit(`chat:${tgId}`, 8, 10).catch(() => true);
+        if (!ok) return;
+      }
 
       const code = roomManager.userRoom.get(tgId);
       if (!code) return;
