@@ -2,7 +2,12 @@
 
 const { Pool } = require("pg");
 const Redis = require("ioredis");
-const { DEFAULT_AVATAR, sanitizeAvatar, sanitizeName } = require("../packages/shared/protocol");
+const protocol = require("../packages/shared/protocol");
+
+const FALLBACK_AVATAR = { sk: 0, hr: 0, hc: 0, st: 0, sc: 0, pt: 0, pc: 0, ac: 0 };
+const BASE_AVATAR = protocol.DEFAULT_AVATAR || FALLBACK_AVATAR;
+const sanitizeAvatar = protocol.sanitizeAvatar || ((a) => ({ ...BASE_AVATAR, ...(a || {}) }));
+const sanitizeName = protocol.sanitizeName || ((n) => String(n || "Pemain").trim().slice(0, 16) || "Pemain");
 
 const DATABASE_URL = process.env.DATABASE_URL || "";
 const REDIS_URL = process.env.REDIS_URL || "";
@@ -10,7 +15,6 @@ const REDIS_URL = process.env.REDIS_URL || "";
 let pool = null;
 let redis = null;
 
-// Fallback penyimpanan sementara jika dev lokal tanpa Postgres/Redis
 const memUsers = new Map();
 const memRateLimits = new Map();
 
@@ -52,7 +56,6 @@ async function initDatabases() {
       );
     `);
 
-    // Pastikan kolom is_banned ada jika tabel users sudah dibuat sebelumnya
     await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_banned BOOLEAN NOT NULL DEFAULT FALSE;`);
     console.log("[DB] PostgreSQL siap.");
   } else {
@@ -88,6 +91,7 @@ function mapUserRow(row) {
 async function upsertUser({ telegramId, username = "", displayName = "Pemain" }) {
   const cleanName = sanitizeName(displayName);
   const cleanUser = String(username || "").slice(0, 64);
+  const defaultAvJson = JSON.stringify(BASE_AVATAR);
 
   if (!pool) {
     let u = memUsers.get(telegramId);
@@ -97,7 +101,7 @@ async function upsertUser({ telegramId, username = "", displayName = "Pemain" })
         telegramId,
         username: cleanUser,
         displayName: cleanName,
-        avatar: { ...DEFAULT_AVATAR },
+        avatar: { ...BASE_AVATAR },
         coins: 0,
         xp: 0,
         gamesPlayed: 0,
@@ -116,13 +120,13 @@ async function upsertUser({ telegramId, username = "", displayName = "Pemain" })
   const res = await pool.query(
     `
     INSERT INTO users (telegram_id, username, display_name, avatar_json)
-    VALUES ($1, $2, $3, $4::jsonb)
+    VALUES ($1, $2, $3, COALESCE($4::jsonb, '{}'::jsonb))
     ON CONFLICT (telegram_id) DO UPDATE SET
       username = EXCLUDED.username,
       updated_at = NOW()
     RETURNING *;
     `,
-    [telegramId, cleanUser, cleanName, JSON.stringify(DEFAULT_AVATAR)]
+    [telegramId, cleanUser, cleanName, defaultAvJson]
   );
   return mapUserRow(res.rows[0]);
 }
@@ -243,8 +247,6 @@ async function getLeaderboard(limit = 10) {
   );
   return res.rows;
 }
-
-/* ---------- Fungsi Khusus Admin ---------- */
 
 async function getServerStats() {
   if (!pool) {
