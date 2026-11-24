@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+  <title>Midnight Shift: Pixel Multiplayer</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <canvas id="c"></canvas>
+
+  <!-- SPLASH & MENU UTAMA -->
+  <div id="splash" class="scr">
+    <div class="ttl">MIDNIGHT<br>SHIFT</div>
+    <p class="sb">Sembunyi di Gedung Kota</p>
+    <div class="ld" id="ldw"><i id="ldb"></i></div>
+    <p id="sp2" class="bl">MENGHUBUNGKAN...</p>
+    <div id="menu" class="mb hide">
+      <button class="pb g" id="mCreate">BUAT ROOM</button>
+      <button class="pb" id="mJoin">GABUNG ROOM</button>
+      <button class="pb d" id="mAv">AVATAR & KOIN</button>
+      <button class="pb d" id="mStat">STATISTIK</button>
+      <button class="pb d" id="mSet">PENGATURAN</button>
+      <button class="pb d" id="mHow">CARA MAIN</button>
+    </div>
+    <p class="sb2" id="who"></p>
+  </div>
+
+  <!-- KUSTOMISASI AVATAR -->
+  <div id="creator" class="scr hide">
+    <div class="pnl px">
+      <h2>BUAT AVATAR</h2>
+      <canvas id="pv" width="20" height="30"></canvas>
+      <div id="coin" style="color:var(--ac);margin:2px 0 4px"></div>
+      <div>
+        <button class="pb d" id="rl">◀</button>
+        <button class="pb d" id="rr">▶</button>
+        <button class="pb d" id="rz">ACAK</button>
+      </div>
+      <div class="tabs" id="tabs"></div>
+      <div class="opts" id="opts"></div>
+      <button class="pb g" id="ok">SIMPAN & KEMBALI</button>
+    </div>
+  </div>
+
+  <!-- LOBI MULTIPLAYER JALAN KOTA -->
+  <div id="lobby" class="scr hide">
+    <div id="ltop" class="px">
+      <div class="tg">
+        <b>✈</b>
+        <div>
+          <span id="lCode" style="color:var(--ac)">ROOM #------</span><br>
+          <span id="lMode" style="opacity:.7;font-size:7px">CLASSIC · MENUNGGU</span>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:4px">
+        <div id="cnt" style="color:var(--gr)">1/20</div>
+        <button class="pb d" id="bShare" style="padding:7px;margin:0;font-size:7px">UNDANG</button>
+        <button class="pb d" id="stg" style="padding:7px;margin:0;font-size:7px">SET</button>
+        <button class="pb r" id="bLeave" style="padding:7px;margin:0;font-size:7px">KELUAR</button>
+      </div>
+    </div>
+
+    <!-- Kotak Chat Singkat Lobi -->
+    <div id="lchat" class="px">
+      <div id="chatLog"></div>
+      <div class="crow">
+        <button class="pb d" id="bQChat" style="padding:6px;font-size:7px;margin:0">QUICK</button>
+        <input class="ni" id="chatInp" maxlength="100" placeholder="Ketik pesan..." style="flex:1;width:auto;padding:6px;font-size:7px">
+        <button class="pb g" id="bSendChat" style="padding:6px 8px;font-size:7px;margin:0">KIRIM</button>
+      </div>
+    </div>
+
+    <div id="ldock" class="px">
+      <div class="drow" id="hostBar">
+        <button class="pb d" id="bMode">MODE: CLASSIC</button>
+        <button class="pb d" id="bBotFill">BOT: NYALA</button>
+        <button class="pb g" id="go">MULAI</button>
+      </div>
+      <div class="drow" id="guestBar" style="margin-top:4px">
+        <button class="pb g" id="bReady">SIAP (READY)</button>
+        <button class="pb d" id="ed">AVATAR</button>
+      </div>
+      <div class="kh">WASD / JOYSTICK · SPASI LOMPAT · 1-3 EMOTE · SERET LAYAR</div>
+    </div>
+  </div>
+
+  <!-- HUD IN-GAME -->
+  <div id="hud" class="hide">
+    <div class="top">
+      <div class="px" id="tm">4:30</div>
+      <div class="px tk">
+        <span id="tl">TUGAS 0/4</span>
+        <div class="ld"><i id="tb"></i></div>
+      </div>
+      <div class="px" id="role">WARGA</div>
+    </div>
+    <div id="obj" class="px"></div>
+    <div id="toast" class="px"></div>
+    <canvas id="mm" class="px" width="128" height="88"></canvas>
+
+    <button class="pb d" id="hs" style="position:absolute;left:calc(50% - 24px);width:48px;padding:8px 0;font-size:7px;opacity:.75;bottom:calc(env(safe-area-inset-bottom,0px) + 14px)">SET</button>
+    <div class="bt">
+      <button class="pb off" id="bAct">AKSI</button>
+      <button class="pb d" id="bDis">NYAMAR</button>
+      <button class="pb" id="bSpr">LARI</button>
+    </div>
+  </div>
+
+  <!-- MODAL PENGATURAN, POPUP & KONTROL -->
+  <div id="set" class="scr hide" style="z-index:9;background:rgba(5,3,14,.85)">
+    <div class="pnl px">
+      <h2>PENGATURAN</h2>
+      <div id="sb"></div>
+      <button class="pb g" id="sx">SELESAI</button>
+    </div>
+  </div>
+  <div id="sheet"><div class="box px" id="box"></div></div>
+  <div id="stick" class="px"><i id="knob"></i></div>
+  <div id="lbt">
+    <button class="pb g" id="lj">LOMPAT</button>
+    <button class="pb d" id="e1">JOGET</button>
+    <button class="pb r" id="e2">LOVE</button>
+    <button class="pb" id="e3">KAGET</button>
+  </div>
+  <div id="warn"></div>
+
+  <script src="/js/config.js"></script>
+  <script src="/js/sprites.js"></script>
+  <script src="/js/world.js"></script>
+  <script src="/js/network.js"></script>
+  <script src="/js/main.js"></script>
+</body>
+</html>
