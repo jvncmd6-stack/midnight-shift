@@ -1,13 +1,11 @@
 "use strict";
 
 const path = require("path");
-const crypto = require("crypto");
 const Fastify = require("fastify");
 const fastifyStatic = require("@fastify/static");
 const fastifyCors = require("@fastify/cors");
 const fastifyRateLimit = require("@fastify/rate-limit");
 const { Server } = require("socket.io");
-const { webhookCallback } = require("grammy");
 
 const {
   verifyTelegramInitData,
@@ -27,17 +25,10 @@ const { createTelegramBot, scheduleGroupCardUpdate } = require("../bot/index");
 const { validateMoveInput, sanitizeText, QUICK_CHATS } = require("../packages/shared/protocol");
 
 const PORT = Number(process.env.PORT || 3000);
-const BOT_TOKEN = process.env.BOT_TOKEN || "";
-
-// Pastikan WEBAPP_URL selalu diawali https:// dan tanpa garis miring di akhir
 const rawWebappUrl = String(process.env.WEBAPP_URL || "").trim().replace(/\/$/, "");
 const WEBAPP_URL = rawWebappUrl
   ? (rawWebappUrl.startsWith("http") ? rawWebappUrl : `https://${rawWebappUrl}`)
   : "";
-
-const WEBHOOK_SECRET = BOT_TOKEN
-  ? crypto.createHash("sha256").update(BOT_TOKEN).digest("hex").slice(0, 24)
-  : "dev-webhook";
 
 async function bootstrap() {
   await initDatabases();
@@ -72,10 +63,6 @@ async function bootstrap() {
   });
 
   bot = createTelegramBot(roomManager, io);
-
-  if (bot) {
-    fastify.post(`/webhook/${WEBHOOK_SECRET}`, webhookCallback(bot, "fastify"));
-  }
 
   fastify.post("/api/auth", async (req, reply) => {
     const body = req.body || {};
@@ -247,21 +234,24 @@ async function bootstrap() {
   await fastify.listen({ port: PORT, host: "0.0.0.0" });
   console.log(`[Server] Midnight Shift berjalan di port ${PORT}`);
 
-  // Daftarkan Webhook & Menu Button otomatis ke Telegram saat server menyala
-  if (bot && WEBAPP_URL) {
+  // Jalankan Bot Telegram dengan Long Polling (Anti-Gagal Webhook)
+  if (bot) {
     try {
-      const webhookUrl = `${WEBAPP_URL}/webhook/${WEBHOOK_SECRET}`;
-      await bot.api.setWebhook(webhookUrl, { drop_pending_updates: true });
-      console.log(`[Bot] Webhook aktif di ${webhookUrl}`);
-
-      await bot.api.setChatMenuButton({
-        menu_button: {
-          type: "web_app",
-          text: "Main Game",
-          web_app: { url: WEBAPP_URL }
+      await bot.api.deleteWebhook({ drop_pending_updates: true });
+      if (WEBAPP_URL) {
+        await bot.api.setChatMenuButton({
+          menu_button: {
+            type: "web_app",
+            text: "Main Game",
+            web_app: { url: WEBAPP_URL }
+          }
+        });
+      }
+      bot.start({
+        onStart: (botInfo) => {
+          console.log(`[Bot] @${botInfo.username} aktif (Polling Mode)!`);
         }
       });
-      console.log(`[Bot] Menu Button aktif mengarah ke ${WEBAPP_URL}`);
     } catch (err) {
       console.error("[Bot Setup Error]", err.message);
     }
