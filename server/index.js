@@ -1,263 +1,378 @@
 "use strict";
 
+require("dotenv").config();
 const path = require("path");
-const Fastify = require("fastify");
-const fastifyStatic = require("@fastify/static");
-const fastifyCors = require("@fastify/cors");
-const fastifyRateLimit = require("@fastify/rate-limit");
+const http = require("http");
+const express = require("express");
 const { Server } = require("socket.io");
 
-const {
-  verifyTelegramInitData,
-  signSessionToken,
-  verifySessionToken,
-  createGuestIdentity
-} = require("./auth");
-const {
-  initDatabases,
-  upsertUser,
-  updateUserCustomization,
-  getLeaderboard,
-  checkRateLimit
-} = require("./db");
-const { RoomManager } = require("./roomManager");
-const { createTelegramBot, scheduleGroupCardUpdate } = require("../bot/index");
-const { validateMoveInput, sanitizeText, QUICK_CHATS } = require("../packages/shared/protocol");
+const { verifyTelegramInitData } = require("./auth/telegram");
+const { createMatch, stepMatch, applyPlayerInput, applyPlayerAction, buildPlayerSnapshot } = require("./game/match");
+const { startTelegramBot, notifyRoomUpdated } = require("./bot/index");
 
-const PORT = Number(process.env.PORT || 3000);
-const rawWebappUrl = String(process.env.WEBAPP_URL || "").trim().replace(/\/$/, "");
-const WEBAPP_URL = rawWebappUrl
-  ? (rawWebappUrl.startsWith("http") ? rawWebappUrl : `https://${rawWebappUrl}`)
-  : "";
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server, { cors: { origin: "*" } });
 
-async function bootstrap() {
-  await initDatabases();
+app.use(express.json());
+app.use(express.static(path.join(__dirname, "..", "public")));
 
-  const fastify = Fastify({ logger: false, trustProxy: true });
+app.get("/health", (_req, res) => res.json({ ok: true, time: Date.now() }));
 
-  await fastify.register(fastifyCors, {
-    origin: process.env.NODE_ENV === "production" && WEBAPP_URL ? [WEBAPP_URL, "https://web.telegram.org"] : true
-  });
+const users = new Map();
+const rooms = new Map();
+const matches = new Map();
 
-  await fastify.register(fastifyRateLimit, {
-    max: 120,
-    timeWindow: "1 minute"
-  });
+function getOrCreateUser(tgId, firstName = "Pemain") {
+  const id = String(tgId);
+  if (!users.has(id)) {
+    users.set(id, {
+      tgId: id,
+      displayName: String(firstName).slice(0, 12) || "Pemain",
+      coins: 150,
+      xp: 0,
+      games: 0,
+      wins: 0,
+      tasks: 0,
+      unlockedItems: [],
+      avatar: { g: "f", skin: 1, hair: 1, hairC: 0, shirt: 0, shirtC: 1, bot: 1, botC: 7, acc: 0 }
+    });
+  }
+  return users.get(id);
+}
 
-  await fastify.register(fastifyStatic, {
-    root: path.join(__dirname, "../public"),
-    prefix: "/"
-  });
+function makeRoomCode() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let code = "";
+  do {
+    code = "";
+    for (let i = 0; i < 5; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  } while (rooms.has(code));
+  return code;
+}
 
-  fastify.get("/health", async () => ({ ok: true, ts: Date.now() }));
+function serializeRoom(room) {
+  return {
+    code: room.code,
+    hostTgId: String(room.hostTgId),
+    hostName: room.hostName,
+    mode: room.mode,
+    isPublic: room.isPublic,
+    phase: room.phase,
+    members: room.members.map((m) => ({
+      tgId: String(m.tgId),
+      name: m.name,
+      ready: !!m.ready,
+      avatar: m.avatar,
+      x: m.x || 24,
+      z: m.z || 13
+    }))
+  };
+}
 
-  const io = new Server(fastify.server, {
-    cors: { origin: "*" },
-    pingInterval: 10000,
-    pingTimeout: 15000
-  });
+function createRoomRecord({ hostTgId, hostName, mode = "CLASSIC", isPublic = true, chatId = null }) {
+  const code = makeRoomCode();
+  const room = {
+    code,
+    hostTgId: String(hostTgId),
+    hostName: String(hostName || "Host").slice(0, 12),
+    mode,
+    isPublic,
+    phase: "LOBBY",
+    chatId,
+    messageId: null,
+    members: []
+  };
+  rooms.set(code, room);
+  return room;
+}
 
-  let bot = null;
-  const roomManager = new RoomManager(io, (room, matchResult) => {
-    scheduleGroupCardUpdate(bot, room, matchResult);
-  });
-
-  bot = createTelegramBot(roomManager, io);
-
-  fastify.post("/api/auth", async (req, reply) => {
-    const body = req.body || {};
-    let identity = verifyTelegramInitData(body.initData);
-
-    if (!identity && process.env.NODE_ENV !== "production") {
-      identity = createGuestIdentity(body.guestId, body.guestName);
-    }
-
-    if (!identity) {
-      return reply.code(401).send({ error: "INVALID_SESSION", message: "Autentikasi Telegram gagal." });
-    }
-
-    const user = await upsertUser(identity);
-
-    if (user.isBanned) {
-      return reply.code(403).send({
-        error: "BANNED",
-        message: "Akun kamu telah diblokir oleh Admin."
-      });
-    }
-
-    const token = signSessionToken(user);
-
-    return {
-      token,
-      user,
-      startParam: identity.startParam,
-      publicRooms: roomManager.getPublicRooms()
+function joinRoomMember(room, user, socketId = null) {
+  const id = String(user.tgId);
+  let member = room.members.find((m) => String(m.tgId) === id);
+  if (!member) {
+    if (room.members.length >= 20) return null;
+    member = {
+      tgId: id,
+      name: user.displayName,
+      avatar: user.avatar,
+      ready: String(room.hostTgId) === id,
+      socketId,
+      x: 22 + Math.random() * 4,
+      z: 12 + Math.random() * 2
     };
+    room.members.push(member);
+  } else {
+    member.name = user.displayName;
+    member.avatar = user.avatar;
+    if (socketId) member.socketId = socketId;
+  }
+  return member;
+}
+
+/* ---------- Socket.IO Multiplayer Handlers ---------- */
+io.on("connection", (socket) => {
+  socket.on("auth:hello", ({ initData, displayName, avatar } = {}, cb) => {
+    const verified = verifyTelegramInitData(initData, process.env.BOT_TOKEN);
+    if (!verified) {
+      if (typeof cb === "function") cb({ ok: false, error: "Autentikasi Telegram tidak valid" });
+      return;
+    }
+    const user = getOrCreateUser(verified.tgId, displayName || verified.firstName);
+    if (displayName) user.displayName = String(displayName).slice(0, 12);
+    if (avatar && typeof avatar === "object") user.avatar = avatar;
+
+    socket.data.tgId = String(user.tgId);
+    if (typeof cb === "function") cb({ ok: true, user });
   });
 
-  fastify.post("/api/customize", async (req, reply) => {
-    const authHeader = req.headers.authorization || "";
-    const session = verifySessionToken(authHeader.replace("Bearer ", ""));
-    if (!session) return reply.code(401).send({ error: "UNAUTHORIZED" });
+  socket.on("user:customize", ({ displayName, avatar, buyItemKey, price } = {}, cb) => {
+    const user = users.get(socket.data.tgId);
+    if (!user) return typeof cb === "function" && cb({ error: "Belum login" });
 
-    const body = req.body || {};
-    const result = await updateUserCustomization(session.uid, {
-      displayName: body.displayName,
-      avatar: body.avatar,
-      buyItemKey: body.buyItemKey,
-      price: body.price
-    });
+    if (buyItemKey && price) {
+      if (user.coins < price) return typeof cb === "function" && cb({ error: "Koin tidak cukup" });
+      if (!user.unlockedItems.includes(buyItemKey)) {
+        user.coins -= price;
+        user.unlockedItems.push(buyItemKey);
+      }
+    }
+    if (displayName) user.displayName = String(displayName).slice(0, 12);
+    if (avatar && typeof avatar === "object") user.avatar = avatar;
 
-    if (!result) return reply.code(400).send({ error: "UPDATE_FAILED" });
-    return result;
+    const room = rooms.get(socket.data.roomCode);
+    if (room) {
+      const m = room.members.find((x) => String(x.tgId) === user.tgId);
+      if (m) {
+        m.name = user.displayName;
+        m.avatar = user.avatar;
+        io.to(room.code).emit("room:updated", serializeRoom(room));
+      }
+    }
+    if (typeof cb === "function") cb({ ok: true, user });
   });
 
-  fastify.get("/api/rooms", async () => ({ rooms: roomManager.getPublicRooms() }));
-  fastify.get("/api/leaderboard", async () => ({ leaderboard: await getLeaderboard(10) }));
+  socket.on("room:create", ({ mode = "CLASSIC", isPublic = true } = {}, cb) => {
+    const user = users.get(socket.data.tgId);
+    if (!user) return typeof cb === "function" && cb({ error: "Belum login" });
 
-  io.use(async (socket, next) => {
-    const token = socket.handshake.auth && socket.handshake.auth.token;
-    const session = verifySessionToken(token);
-    if (!session) return next(new Error("INVALID_SESSION"));
+    const room = createRoomRecord({ hostTgId: user.tgId, hostName: user.displayName, mode, isPublic });
+    joinRoomMember(room, user, socket.id);
+    socket.data.roomCode = room.code;
+    socket.join(room.code);
 
-    const user = await upsertUser({
-      telegramId: session.tgId,
-      displayName: session.name
-    });
-    if (user.isBanned) return next(new Error("BANNED"));
-
-    socket.data.user = user;
-    next();
+    const payload = serializeRoom(room);
+    if (typeof cb === "function") cb({ ok: true, room: payload });
+    io.to(room.code).emit("room:updated", payload);
   });
 
-  io.on("connection", (socket) => {
-    const user = socket.data.user;
-    const tgId = user.telegramId;
+  socket.on("room:join", ({ code } = {}, cb) => {
+    const user = users.get(socket.data.tgId);
+    if (!user) return typeof cb === "function" && cb({ error: "Belum login" });
 
-    const activeCode = roomManager.userRoom.get(tgId);
-    if (activeCode) {
-      roomManager.joinRoom(activeCode, user, socket);
+    const room = rooms.get(String(code || "").toUpperCase().trim());
+    if (!room) return typeof cb === "function" && cb({ error: "Kode room tidak ditemukan" });
+    if (room.phase !== "LOBBY") return typeof cb === "function" && cb({ error: "Permainan sedang berlangsung" });
+
+    const m = joinRoomMember(room, user, socket.id);
+    if (!m) return typeof cb === "function" && cb({ error: "Room sudah penuh (20/20)" });
+
+    socket.data.roomCode = room.code;
+    socket.join(room.code);
+
+    const payload = serializeRoom(room);
+    if (typeof cb === "function") cb({ ok: true, room: payload });
+    io.to(room.code).emit("room:updated", payload);
+    notifyRoomUpdated(room);
+  });
+
+  socket.on("room:list", (_data, cb) => {
+    const list = [];
+    for (const r of rooms.values()) {
+      if (r.isPublic && r.phase === "LOBBY") {
+        list.push({ code: r.code, hostName: r.hostName, mode: r.mode, count: r.members.length, max: 20 });
+      }
+    }
+    if (typeof cb === "function") cb({ rooms: list });
+  });
+
+  socket.on("room:leave", ({ code } = {}) => {
+    const room = rooms.get(code || socket.data.roomCode);
+    if (!room) return;
+    room.members = room.members.filter((m) => String(m.tgId) !== socket.data.tgId);
+    socket.leave(room.code);
+    socket.data.roomCode = null;
+
+    if (room.members.length === 0) {
+      rooms.delete(room.code);
+      matches.delete(room.code);
+    } else {
+      if (String(room.hostTgId) === socket.data.tgId) {
+        room.hostTgId = String(room.members[0].tgId);
+        room.hostName = room.members[0].name;
+      }
+      io.to(room.code).emit("room:updated", serializeRoom(room));
+      notifyRoomUpdated(room);
+    }
+  });
+
+  socket.on("room:ready", ({ code } = {}) => {
+    const room = rooms.get(code || socket.data.roomCode);
+    if (!room) return;
+    const m = room.members.find((x) => String(x.tgId) === socket.data.tgId);
+    if (m) {
+      m.ready = !m.ready;
+      io.to(room.code).emit("room:updated", serializeRoom(room));
+    }
+  });
+
+  socket.on("room:settings", ({ code, mode } = {}) => {
+    const room = rooms.get(code || socket.data.roomCode);
+    if (!room || String(room.hostTgId) !== socket.data.tgId) return;
+    if (mode) room.mode = mode;
+    io.to(room.code).emit("room:updated", serializeRoom(room));
+  });
+
+  socket.on("room:chat", ({ code, text, quickIdx } = {}) => {
+    const room = rooms.get(code || socket.data.roomCode);
+    const user = users.get(socket.data.tgId);
+    if (!room || !user) return;
+    const QUICK = ["Halo semua!", "Siap main!", "Ayo mulai!", "Gas terus!", "Aku bukan Cepu!", "Hati-hati Satpam!", "Kumpul di tengah!", "GG mantap!"];
+    const msg = typeof quickIdx === "number" && QUICK[quickIdx] ? QUICK[quickIdx] : String(text || "").replace(/[<>]/g, "").trim().slice(0, 80);
+    if (msg) io.to(room.code).emit("room:chat_msg", { name: user.displayName, text: msg });
+  });
+
+  socket.on("lobby:move", ({ code, x, z, dir, em, jy } = {}) => {
+    const room = rooms.get(code || socket.data.roomCode);
+    if (!room || room.phase !== "LOBBY") return;
+    const m = room.members.find((u) => String(u.tgId) === socket.data.tgId);
+    if (m) {
+      m.x = x;
+      m.z = z;
+    }
+    socket.to(room.code).emit("lobby:peer_move", { tgId: socket.data.tgId, x, z, dir, em, jy });
+  });
+
+  socket.on("match:start", ({ code, fillWithBots = true } = {}, cb) => {
+    const room = rooms.get(code || socket.data.roomCode);
+    if (!room) return typeof cb === "function" && cb({ error: "Room tidak ditemukan" });
+    if (String(room.hostTgId) !== socket.data.tgId) return typeof cb === "function" && cb({ error: "Hanya host yang bisa memulai" });
+    if (!fillWithBots && room.members.length < 3) {
+      return typeof cb === "function" && cb({ error: "Minimal 3 pemain jika Bot mati" });
     }
 
-    socket.on("room:create", async (payload = {}, cb) => {
-      if (!(await checkRateLimit(`rc:${tgId}`, 5, 30))) return;
-      const res = roomManager.createRoom({
-        hostUser: user,
-        mode: payload.mode || "CLASSIC",
-        isPublic: payload.isPublic !== false
-      });
-      roomManager.joinRoom(res.room.code, user, socket);
-      if (cb) cb({ ok: true, code: res.room.code });
-    });
+    room.phase = "PLAYING";
+    const match = createMatch(room, { fillWithBots, minPlayers: fillWithBots ? 6 : room.members.length });
+    matches.set(room.code, match);
 
-    socket.on("room:join", async (payload = {}, cb) => {
-      if (!(await checkRateLimit(`rj:${tgId}`, 10, 30))) return;
-      const res = roomManager.joinRoom(payload.code, user, socket);
-      if (cb) cb(res.error ? { ok: false, error: res.error, message: res.message } : { ok: true, code: res.room.code });
-    });
+    io.to(room.code).emit("room:updated", serializeRoom(room));
+    notifyRoomUpdated(room);
 
-    socket.on("room:leave", () => {
-      roomManager.leaveRoom(tgId, socket);
-    });
+    for (const m of room.members) {
+      const p = match.players.get(String(m.tgId));
+      if (p && m.socketId) {
+        io.to(m.socketId).emit("match:started", {
+          role: p.role,
+          roleName: p.roleName,
+          team: p.team
+        });
+        io.to(m.socketId).emit("match:snapshot", buildPlayerSnapshot(match, String(m.tgId)));
+      }
+    }
+    if (typeof cb === "function") cb({ ok: true });
+  });
 
-    socket.on("room:ready", () => {
-      roomManager.toggleReady(tgId);
-    });
+  socket.on("match:input", ({ code, seq, ix, iy, angle } = {}) => {
+    const match = matches.get(code || socket.data.roomCode);
+    if (!match) return;
+    applyPlayerInput(match, socket.data.tgId, { seq, ix, iy, angle });
+  });
 
-    socket.on("room:settings", (payload = {}) => {
-      roomManager.updateSettings(tgId, payload);
-    });
+  socket.on("match:action", ({ code, action, ...data } = {}) => {
+    const match = matches.get(code || socket.data.roomCode);
+    if (!match) return;
+    const events = applyPlayerAction(match, socket.data.tgId, action, data);
+    if (Array.isArray(events)) {
+      events.forEach((ev) => io.to(match.code).emit("match:event", ev));
+    }
+  });
 
-    socket.on("room:start", (payload = {}, cb) => {
-      const res = roomManager.startMatch(tgId, payload.fillWithBots !== false);
-      if (cb) cb(res);
-    });
+  socket.on("disconnect", () => {
+    const room = rooms.get(socket.data.roomCode);
+    if (!room) return;
+    room.members = room.members.filter((m) => String(m.tgId) !== socket.data.tgId);
+    if (room.members.length === 0) {
+      rooms.delete(room.code);
+      matches.delete(room.code);
+    } else {
+      if (String(room.hostTgId) === socket.data.tgId) {
+        room.hostTgId = String(room.members[0].tgId);
+        room.hostName = room.members[0].name;
+      }
+      io.to(room.code).emit("room:updated", serializeRoom(room));
+      notifyRoomUpdated(room);
+    }
+  });
+});
 
-    socket.on("lobby:move", (payload = {}) => {
-      if (Number.isFinite(payload.x) && Number.isFinite(payload.z)) {
-        roomManager.moveInLobby(tgId, payload.x, payload.z, payload.dir);
-        const code = socket.data.roomCode;
-        if (code) {
-          socket.to(code).emit("lobby:peerMove", {
-            tgId,
-            x: payload.x,
-            z: payload.z,
-            dir: payload.dir || 0,
-            em: payload.em || 0,
-            jy: payload.jy || 0
+/* ---------- Game Simulation Loop (20 Tick/Detik) ---------- */
+setInterval(() => {
+  const dt = 0.05;
+  for (const [code, match] of matches.entries()) {
+    const room = rooms.get(code);
+    if (!room) {
+      matches.delete(code);
+      continue;
+    }
+
+    const result = stepMatch(match, dt);
+    if (result && result.meetingUpdate) {
+      io.to(code).emit("match:meeting", result.meetingUpdate);
+    }
+
+    if (result && result.ended) {
+      room.phase = "LOBBY";
+      matches.delete(code);
+      io.to(code).emit("room:updated", serializeRoom(room));
+      notifyRoomUpdated(room);
+
+      for (const m of room.members) {
+        const p = match.players.get(String(m.tgId));
+        const u = users.get(String(m.tgId));
+        const won = p ? result.winningTeams.includes(p.team) : false;
+        const reward = { win: won, coins: won ? 45 : 15, xp: won ? 60 : 25 };
+        if (u) {
+          u.coins += reward.coins;
+          u.xp += reward.xp;
+          u.games += 1;
+          if (won) u.wins += 1;
+        }
+        if (m.socketId) {
+          io.to(m.socketId).emit("match:ended", {
+            reason: result.reason,
+            players: result.summary,
+            yourReward: reward
           });
         }
       }
-    });
+      continue;
+    }
 
-    socket.on("chat:send", async (payload = {}) => {
-      const code = socket.data.roomCode;
-      if (!code) return;
-      if (!(await checkRateLimit(`chat:${tgId}`, 4, 5))) return;
-
-      let text = "";
-      if (typeof payload.quickIdx === "number" && QUICK_CHATS[payload.quickIdx]) {
-        text = QUICK_CHATS[payload.quickIdx];
-      } else {
-        text = sanitizeText(payload.text, 140);
+    for (const m of room.members) {
+      if (m.socketId) {
+        io.to(m.socketId).emit("match:snapshot", buildPlayerSnapshot(match, String(m.tgId)));
       }
-      if (!text) return;
-
-      io.to(code).emit("chat:message", {
-        tgId,
-        name: user.displayName,
-        text,
-        ts: Date.now()
-      });
-    });
-
-    socket.on("player:input", (payload) => {
-      const code = socket.data.roomCode;
-      const room = code ? roomManager.rooms.get(code) : null;
-      if (!room || !room.engine) return;
-      const valid = validateMoveInput(payload);
-      if (valid) room.engine.setPlayerInput(tgId, valid);
-    });
-
-    socket.on("player:action", (payload = {}) => {
-      const code = socket.data.roomCode;
-      const room = code ? roomManager.rooms.get(code) : null;
-      if (!room || !room.engine || typeof payload.type !== "string") return;
-      room.engine.handleAction(tgId, payload.type, payload);
-    });
-
-    socket.on("disconnect", () => {
-      roomManager.handleSocketDisconnect(tgId);
-    });
-  });
-
-  await fastify.listen({ port: PORT, host: "0.0.0.0" });
-  console.log(`[Server] Midnight Shift berjalan di port ${PORT}`);
-
-  if (bot) {
-    try {
-      await bot.api.deleteWebhook({ drop_pending_updates: true });
-      if (WEBAPP_URL) {
-        await bot.api.setChatMenuButton({
-          menu_button: {
-            type: "web_app",
-            text: "Main Game",
-            web_app: { url: WEBAPP_URL }
-          }
-        });
-      }
-      bot.start({
-        onStart: (botInfo) => {
-          console.log(`[Bot] @${botInfo.username} aktif (Polling Mode)!`);
-        }
-      });
-    } catch (err) {
-      console.error("[Bot Setup Error]", err.message);
     }
   }
-}
+}, 50);
 
-bootstrap().catch((err) => {
-  console.error("[Fatal]", err);
-  process.exit(1);
+startTelegramBot({
+  rooms,
+  getOrCreateUser,
+  createRoomRecord,
+  joinRoomMember,
+  serializeRoom
 });
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => console.log(`Midnight Shift server running on port ${PORT}`));
