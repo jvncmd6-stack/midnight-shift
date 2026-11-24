@@ -8,9 +8,11 @@ const { registerAdminCommands } = require("./admin");
 const BOT_TOKEN = process.env.BOT_TOKEN || "";
 const BOT_USERNAME = process.env.BOT_USERNAME || "";
 const APP_SHORT_NAME = process.env.APP_SHORT_NAME || "play";
-const WEBAPP_URL = process.env.WEBAPP_URL || "";
+const rawWebappUrl = String(process.env.WEBAPP_URL || "").trim().replace(/\/$/, "");
+const WEBAPP_URL = rawWebappUrl
+  ? (rawWebappUrl.startsWith("http") ? rawWebappUrl : `https://${rawWebappUrl}`)
+  : "";
 
-// Debounce timer per chatId agar tidak terkena rate limit Telegram editMessageText
 const editTimers = new Map();
 
 function buildMiniAppLink(startParam = "") {
@@ -22,6 +24,21 @@ function buildMiniAppLink(startParam = "") {
   return WEBAPP_URL || "https://t.me";
 }
 
+function buildLobbyKeyboard(room) {
+  const kb = new InlineKeyboard();
+  if (room.phase === PHASE.WAITING) {
+    kb.callback("✋ IKUT MAIN", `reg_${room.code}`)
+      .callback("❌ BATAL", `unreg_${room.code}`)
+      .row()
+      .url("🎮 BUKA MINI APP", buildMiniAppLink(`room_${room.code}`))
+      .row()
+      .callback("🚀 MULAI GAME (HOST)", `start_${room.code}`);
+  } else {
+    kb.url("🎮 MASUK KE ARENA GAME", buildMiniAppLink(`room_${room.code}`));
+  }
+  return kb;
+}
+
 function createTelegramBot(roomManager, io) {
   if (!BOT_TOKEN) {
     console.warn("[Bot] BOT_TOKEN kosong, fitur bot Telegram dinonaktifkan.");
@@ -29,8 +46,6 @@ function createTelegramBot(roomManager, io) {
   }
 
   const bot = new Bot(BOT_TOKEN);
-
-  // Daftarkan semua perintah khusus Admin (/admin, /givecoin, /broadcast, /closeroom, /ban, /unban)
   registerAdminCommands(bot, roomManager, io);
 
   // /start [room_CODE]
@@ -40,7 +55,7 @@ function createTelegramBot(roomManager, io) {
 
     if (isGroup) {
       return ctx.reply(
-        "🔦 *MIDNIGHT SHIFT*\nPasar malam telah tutup. Gunakan /play untuk membuka lobi grup!",
+        "🔦 *MIDNIGHT SHIFT*\nPasar malam telah tutup. Ketik /play untuk membuka pendaftaran mabar di grup ini!",
         { parse_mode: "Markdown" }
       );
     }
@@ -57,7 +72,7 @@ function createTelegramBot(roomManager, io) {
     );
   });
 
-  // /play atau /room — Buat atau tampilkan lobby grup aktif
+  // /play atau /room — Buka pendaftaran lobi grup
   bot.command(["play", "room"], async (ctx) => {
     const allowed = await checkRateLimit(`bot_cmd:${ctx.from.id}`, 6, 30);
     if (!allowed) return;
@@ -94,15 +109,41 @@ function createTelegramBot(roomManager, io) {
     });
 
     const text = formatLobbyCardText(room);
-    const kb = new InlineKeyboard()
-      .url("🎮 GABUNG LOBI (MINI APP)", buildMiniAppLink(`room_${room.code}`))
-      .row()
-      .callback("🔄 REFRESH", `refresh_${room.code}`);
-
-    const sent = await ctx.reply(text, { parse_mode: "Markdown", reply_markup: kb });
+    const sent = await ctx.reply(text, {
+      parse_mode: "Markdown",
+      reply_markup: buildLobbyKeyboard(room)
+    });
     room.groupMessageId = sent.message_id;
+
     if (reused) {
-      await ctx.reply(`ℹ️ Lobi grup #${room.code} sudah aktif di atas!`);
+      await ctx.reply(`ℹ️ Lobi grup #${room.code} masih terbuka! Klik *✋ IKUT MAIN* di pesan lobi.`);
+    }
+  });
+
+  // /leave — Batal ikut mabar dari lobi grup
+  bot.command("leave", async (ctx) => {
+    const left = roomManager.leaveRoom(String(ctx.from.id));
+    if (left) {
+      await ctx.reply(`👋 *${ctx.from.first_name}* keluar dari daftar pemain.`, { parse_mode: "Markdown" });
+    } else {
+      await ctx.reply("Kamu sedang tidak terdaftar di lobi mana pun.");
+    }
+  });
+
+  // /kick — Keluarkan pemain dari lobi grup (reply pesan pemain target, khusus Host)
+  bot.command("kick", async (ctx) => {
+    const isGroup = ctx.chat.type === "group" || ctx.chat.type === "supergroup";
+    if (!isGroup || !ctx.message.reply_to_message) {
+      return ctx.reply("Balas (reply) pesan pemain yang ingin dikeluarkan lalu ketik `/kick`.", { parse_mode: "Markdown" });
+    }
+    const roomCode = roomManager.groupRoom.get(String(ctx.chat.id));
+    const room = roomCode ? roomManager.rooms.get(roomCode) : null;
+    if (!room || room.hostTgId !== String(ctx.from.id)) {
+      return ctx.reply("Hanya pembuat lobi (Host) yang bisa mengeluarkan pemain.");
+    }
+    const target = ctx.message.reply_to_message.from;
+    if (target && roomManager.leaveRoom(String(target.id))) {
+      await ctx.reply(`👢 *${target.first_name}* dikeluarkan dari lobi.`, { parse_mode: "Markdown" });
     }
   });
 
@@ -123,7 +164,7 @@ function createTelegramBot(roomManager, io) {
     });
   });
 
-  // /profile — Cek statistik & koin pemain
+  // /profile
   bot.command("profile", async (ctx) => {
     const allowed = await checkRateLimit(`bot_prof:${ctx.from.id}`, 5, 30);
     if (!allowed) return;
@@ -143,7 +184,7 @@ function createTelegramBot(roomManager, io) {
     );
   });
 
-  // /rank — Top 10 Leaderboard
+  // /rank
   bot.command("rank", async (ctx) => {
     const allowed = await checkRateLimit(`bot_rank:${ctx.chat.id}`, 4, 30);
     if (!allowed) return;
@@ -157,28 +198,74 @@ function createTelegramBot(roomManager, io) {
     await ctx.reply(`🏆 *TOP 10 MIDNIGHT SHIFT*\n\n${lines.join("\n")}`, { parse_mode: "Markdown" });
   });
 
+  // /help
   bot.command("help", async (ctx) => {
     await ctx.reply(
       "📖 *PERINTAH MIDNIGHT SHIFT*\n" +
-        "• `/play` — Buat / buka lobi grup\n" +
+        "• `/play` — Buka pendaftaran mabar di grup\n" +
+        "• `/leave` — Batal ikut dari lobi grup\n" +
+        "• `/kick` — Keluarkan pemain (reply pesan, khusus Host)\n" +
         "• `/join KODE` — Gabung ke room tertentu\n" +
         "• `/profile` — Lihat koin, level & statistik\n" +
-        "• `/rank` — Papan peringkat pemain\n\n" +
-        "*Cara Main:*\n" +
-        "Warga menyamar jadi benda & menyelesaikan tugas sebelum waktu habis. Satpam mencari penyamar dengan senter. Cepu menyabotase tugas dari dalam!",
+        "• `/rank` — Papan peringkat pemain",
       { parse_mode: "Markdown" }
     );
   });
 
-  // Callback tombol refresh pada kartu lobi grup
-  bot.callbackQuery(/^refresh_([A-Z0-9]{4,8})$/, async (ctx) => {
+  // Tombol ✋ IKUT MAIN langsung di chat grup
+  bot.callbackQuery(/^reg_([A-Z0-9]{4,8})$/, async (ctx) => {
     const code = ctx.match[1];
     const room = roomManager.rooms.get(code);
     if (!room) {
-      return ctx.answerCallbackQuery({ text: "Lobi sudah berakhir.", show_alert: true });
+      return ctx.answerCallbackQuery({ text: "Lobi sudah ditutup.", show_alert: true });
     }
-    await updateGroupCardNow(bot, room, null);
-    await ctx.answerCallbackQuery({ text: "Status diperbarui!" });
+
+    const user = await upsertUser({
+      telegramId: String(ctx.from.id),
+      username: ctx.from.username || "",
+      displayName: ctx.from.first_name || "Pemain"
+    });
+    if (user.isBanned) {
+      return ctx.answerCallbackQuery({ text: "Akun kamu diblokir Admin.", show_alert: true });
+    }
+
+    const res = roomManager.joinRoom(code, user, null, true);
+    if (res.error) {
+      return ctx.answerCallbackQuery({ text: res.message, show_alert: true });
+    }
+
+    await ctx.answerCallbackQuery({
+      text: res.reconnected ? "Kamu sudah terdaftar di lobi ini!" : "✅ Berhasil mendaftar! Klik BUKA MINI APP untuk bersiap."
+    });
+  });
+
+  // Tombol ❌ BATAL langsung di chat grup
+  bot.callbackQuery(/^unreg_([A-Z0-9]{4,8})$/, async (ctx) => {
+    const code = ctx.match[1];
+    const room = roomManager.rooms.get(code);
+    if (!room || !room.members.has(String(ctx.from.id))) {
+      return ctx.answerCallbackQuery({ text: "Kamu belum terdaftar di lobi ini." });
+    }
+    roomManager.leaveRoom(String(ctx.from.id));
+    await ctx.answerCallbackQuery({ text: "❌ Pendaftaran dibatalkan." });
+  });
+
+  // Tombol 🚀 MULAI GAME (HOST) langsung di chat grup
+  bot.callbackQuery(/^start_([A-Z0-9]{4,8})$/, async (ctx) => {
+    const code = ctx.match[1];
+    const room = roomManager.rooms.get(code);
+    if (!room) {
+      return ctx.answerCallbackQuery({ text: "Lobi tidak ditemukan.", show_alert: true });
+    }
+    if (room.hostTgId !== String(ctx.from.id)) {
+      return ctx.answerCallbackQuery({ text: "Hanya pembuat lobi (Host) yang bisa memulai game!", show_alert: true });
+    }
+
+    const res = roomManager.startMatch(String(ctx.from.id), true);
+    if (res.error) {
+      return ctx.answerCallbackQuery({ text: res.message, show_alert: true });
+    }
+    await ctx.answerCallbackQuery({ text: "🚀 Game dimulai! Semua pemain segera masuk ke Mini App!" });
   });
 
   bot.catch((err) => {
@@ -189,6 +276,10 @@ function createTelegramBot(roomManager, io) {
 }
 
 function formatLobbyCardText(room, matchResult = null) {
+  if (matchResult && matchResult.closed) {
+    return `🛑 *LOBI #${room.code} DITUTUP*\nSemua pemain telah keluar atau waktu tunggu habis.\nKetik /play untuk membuka lobi baru.`;
+  }
+
   if (matchResult) {
     const winnerLabel =
       matchResult.winningTeam === "CIVILIAN"
@@ -205,37 +296,34 @@ function formatLobbyCardText(room, matchResult = null) {
       `🏁 *HASIL RONDE — #${room.code}*\n` +
       `*${winnerLabel}*\n_${matchResult.reason}_\n\n` +
       `${topPlayers}\n\n` +
-      `Lobi kembali terbuka untuk ronde berikutnya!`
+      `Pendaftaran ronde berikutnya kembali dibuka! Klik *✋ IKUT MAIN*:`
     );
   }
 
   if (room.phase !== PHASE.WAITING) {
     return (
       `🚨 *MIDNIGHT SHIFT — #${room.code}*\n` +
-      `Status: *SEDANG BERLANGSUNG*\n` +
+      `Status: *PERMAINAN SEDANG BERLANGSUNG!*\n` +
       `Pemain Aktif: *${room.members.size}/20*\n\n` +
-      `_Peran disembunyikan selama pertandingan berlangsung._`
+      `Segera klik tombol di bawah untuk masuk ke arena:`
     );
   }
 
   const names = [];
-  let readyCount = 0;
+  let idx = 1;
   room.members.forEach((m) => {
-    if (m.ready) readyCount++;
-    names.push(`${m.ready ? "✅" : "⏳"} ${m.name}${m.isHost ? " 👑" : ""}`);
+    names.push(`${idx++}. ✅ ${m.name}${m.telegramId === room.hostTgId ? " 👑" : ""}`);
   });
 
   return (
     `🌃 *MIDNIGHT SHIFT — LOBI #${room.code}*\n` +
-    `Mode: *${room.mode}* · Pemain: *${room.members.size}/20* (Siap: ${readyCount})\n\n` +
-    `${names.length ? names.join("\n") : "_Menunggu pemain masuk..._"}\n\n` +
-    `Tekan tombol di bawah untuk masuk ke jalan kota:`
+    `Mode: *${room.mode}* · Terdaftar: *${room.members.size}/20 Pemain*\n\n` +
+    `*Daftar Pemain:*\n` +
+    `${names.length ? names.join("\n") : "_Belum ada pemain. Klik IKUT MAIN di bawah!_"}\n\n` +
+    `Klik *✋ IKUT MAIN* untuk mendaftar, lalu tekan *🎮 BUKA MINI APP*:`
   );
 }
 
-/**
- * Update Kartu Lobi Grup dengan Debounce 1.5 detik (Anti-Spam & Anti-429 Telegram)
- */
 function scheduleGroupCardUpdate(bot, room, matchResult = null) {
   if (!bot || !room.chatId || !room.groupMessageId) return;
 
@@ -246,7 +334,7 @@ function scheduleGroupCardUpdate(bot, room, matchResult = null) {
   const timer = setTimeout(() => {
     editTimers.delete(room.chatId);
     updateGroupCardNow(bot, room, matchResult);
-  }, matchResult ? 200 : 1500);
+  }, matchResult ? 200 : 1200);
 
   editTimers.set(room.chatId, timer);
 }
@@ -255,18 +343,12 @@ async function updateGroupCardNow(bot, room, matchResult) {
   if (!bot || !room.chatId || !room.groupMessageId) return;
   try {
     const text = formatLobbyCardText(room, matchResult);
-    const kb = new InlineKeyboard().url(
-      room.phase === PHASE.WAITING ? "🎮 GABUNG LOBI (MINI APP)" : "👀 BUKA MINI APP",
-      buildMiniAppLink(`room_${room.code}`)
-    );
-    if (room.phase === PHASE.WAITING) {
-      kb.row().callback("🔄 REFRESH", `refresh_${room.code}`);
+    const options = { parse_mode: "Markdown" };
+    if (!matchResult || !matchResult.closed) {
+      options.reply_markup = buildLobbyKeyboard(room);
     }
 
-    await bot.api.editMessageText(room.chatId, room.groupMessageId, text, {
-      parse_mode: "Markdown",
-      reply_markup: kb
-    });
+    await bot.api.editMessageText(room.chatId, room.groupMessageId, text, options);
   } catch (err) {
     if (!String(err.message).includes("message is not modified")) {
       console.warn("[Group Card Edit]", err.message);
