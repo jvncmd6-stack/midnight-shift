@@ -27,10 +27,14 @@ const { createTelegramBot, scheduleGroupCardUpdate } = require("../bot/index");
 const { validateMoveInput, sanitizeText, QUICK_CHATS } = require("../packages/shared/protocol");
 
 const PORT = Number(process.env.PORT || 3000);
-const WEBAPP_URL = process.env.WEBAPP_URL || "";
 const BOT_TOKEN = process.env.BOT_TOKEN || "";
 
-// Secret path webhook otomatis diturunkan dari hash BOT_TOKEN agar aman dari spoofing
+// Pastikan WEBAPP_URL selalu diawali https:// dan tanpa garis miring di akhir
+const rawWebappUrl = String(process.env.WEBAPP_URL || "").trim().replace(/\/$/, "");
+const WEBAPP_URL = rawWebappUrl
+  ? (rawWebappUrl.startsWith("http") ? rawWebappUrl : `https://${rawWebappUrl}`)
+  : "";
+
 const WEBHOOK_SECRET = BOT_TOKEN
   ? crypto.createHash("sha256").update(BOT_TOKEN).digest("hex").slice(0, 24)
   : "dev-webhook";
@@ -49,16 +53,13 @@ async function bootstrap() {
     timeWindow: "1 minute"
   });
 
-  // Sajikan file frontend dari folder public/
   await fastify.register(fastifyStatic, {
     root: path.join(__dirname, "../public"),
     prefix: "/"
   });
 
-  // Healthcheck untuk Railway
   fastify.get("/health", async () => ({ ok: true, ts: Date.now() }));
 
-  // Inisialisasi Socket.IO + RoomManager + Bot
   const io = new Server(fastify.server, {
     cors: { origin: "*" },
     pingInterval: 10000,
@@ -72,17 +73,14 @@ async function bootstrap() {
 
   bot = createTelegramBot(roomManager, io);
 
-  // Pasang endpoint Webhook Telegram jika BOT_TOKEN tersedia
   if (bot) {
     fastify.post(`/webhook/${WEBHOOK_SECRET}`, webhookCallback(bot, "fastify"));
   }
 
-  // API Autentikasi Telegram Mini App
   fastify.post("/api/auth", async (req, reply) => {
     const body = req.body || {};
     let identity = verifyTelegramInitData(body.initData);
 
-    // Fallback Guest hanya untuk mode development non-production
     if (!identity && process.env.NODE_ENV !== "production") {
       identity = createGuestIdentity(body.guestId, body.guestName);
     }
@@ -110,7 +108,6 @@ async function bootstrap() {
     };
   });
 
-  // API Update Avatar / Nama / Beli Item Kosmetik
   fastify.post("/api/customize", async (req, reply) => {
     const authHeader = req.headers.authorization || "";
     const session = verifySessionToken(authHeader.replace("Bearer ", ""));
@@ -128,11 +125,9 @@ async function bootstrap() {
     return result;
   });
 
-  // API Daftar Room Publik & Leaderboard
   fastify.get("/api/rooms", async () => ({ rooms: roomManager.getPublicRooms() }));
   fastify.get("/api/leaderboard", async () => ({ leaderboard: await getLeaderboard(10) }));
 
-  // Middleware Autentikasi Socket.IO
   io.use(async (socket, next) => {
     const token = socket.handshake.auth && socket.handshake.auth.token;
     const session = verifySessionToken(token);
@@ -148,12 +143,10 @@ async function bootstrap() {
     next();
   });
 
-  // Handler Koneksi Real-time Multiplayer
   io.on("connection", (socket) => {
     const user = socket.data.user;
     const tgId = user.telegramId;
 
-    // Auto-rejoin jika pemain sempat terputus di tengah room/match
     const activeCode = roomManager.userRoom.get(tgId);
     if (activeCode) {
       roomManager.joinRoom(activeCode, user, socket);
@@ -193,7 +186,6 @@ async function bootstrap() {
       if (cb) cb(res);
     });
 
-    // Gerak di Lobi Jalan Kota
     socket.on("lobby:move", (payload = {}) => {
       if (Number.isFinite(payload.x) && Number.isFinite(payload.z)) {
         roomManager.moveInLobby(tgId, payload.x, payload.z, payload.dir);
@@ -211,7 +203,6 @@ async function bootstrap() {
       }
     });
 
-    // Chat di Lobi / Rapat Darurat (dengan Rate Limit & Sanitasi)
     socket.on("chat:send", async (payload = {}) => {
       const code = socket.data.roomCode;
       if (!code) return;
@@ -233,7 +224,6 @@ async function bootstrap() {
       });
     });
 
-    // Input Gerak & Aksi di Dalam Pertandingan
     socket.on("player:input", (payload) => {
       const code = socket.data.roomCode;
       const room = code ? roomManager.rooms.get(code) : null;
@@ -257,11 +247,24 @@ async function bootstrap() {
   await fastify.listen({ port: PORT, host: "0.0.0.0" });
   console.log(`[Server] Midnight Shift berjalan di port ${PORT}`);
 
-  // Daftarkan Webhook otomatis ke Telegram saat server menyala
+  // Daftarkan Webhook & Menu Button otomatis ke Telegram saat server menyala
   if (bot && WEBAPP_URL) {
-    const webhookUrl = `${WEBAPP_URL.replace(/\/$/, "")}/webhook/${WEBHOOK_SECRET}`;
-    await bot.api.setWebhook(webhookUrl, { drop_pending_updates: true });
-    console.log(`[Bot] Webhook aktif di ${webhookUrl}`);
+    try {
+      const webhookUrl = `${WEBAPP_URL}/webhook/${WEBHOOK_SECRET}`;
+      await bot.api.setWebhook(webhookUrl, { drop_pending_updates: true });
+      console.log(`[Bot] Webhook aktif di ${webhookUrl}`);
+
+      await bot.api.setChatMenuButton({
+        menu_button: {
+          type: "web_app",
+          text: "Main Game",
+          web_app: { url: WEBAPP_URL }
+        }
+      });
+      console.log(`[Bot] Menu Button aktif mengarah ke ${WEBAPP_URL}`);
+    } catch (err) {
+      console.error("[Bot Setup Error]", err.message);
+    }
   }
 }
 
