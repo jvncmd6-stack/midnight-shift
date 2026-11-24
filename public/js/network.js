@@ -2,7 +2,13 @@
   "use strict";
   const { tgw, getUN, setUN, PG, ME, saveCfg, toast } = W.MS_CFG;
 
-  const socket = W.io({ transports: ["websocket", "polling"] });
+  const socket = W.io({
+    transports: ["polling", "websocket"],
+    reconnection: true,
+    reconnectionAttempts: 10,
+    reconnectionDelay: 1000
+  });
+
   let myTgId = null;
   let currentRoom = null;
   let latestSnapshot = null;
@@ -29,36 +35,58 @@
 
   function authenticate() {
     return new Promise((resolve) => {
-      const done = (res) => {
-        if (!res || !res.ok) {
-          toast((res && res.error) || "Gagal terhubung ke server", "b");
-          return resolve(false);
-        }
-        myTgId = String(res.user.tgId);
-        PG.coins = res.user.coins || 0;
-        PG.xp = res.user.xp || 0;
-        PG.games = res.user.games || 0;
-        PG.wins = res.user.wins || 0;
-        PG.tasks = res.user.tasks || 0;
-        PG.unl = res.user.unlockedItems || [];
-        if (res.user.displayName) setUN(res.user.displayName);
-        if (res.user.avatar && typeof res.user.avatar === "object") {
-          Object.assign(ME, res.user.avatar);
-          ME.sp = {};
-        }
-        saveCfg();
+      let settled = false;
 
-        const autoCode = getStartRoomCode();
-        if (autoCode) joinRoom(autoCode);
-        resolve(true);
+      const finish = (ok, errMsg) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (!ok && errMsg) toast(errMsg, "b");
+        resolve(ok);
       };
 
-      const { sp, ...cleanAv } = ME;
-      socket.emit("auth:hello", {
-        initData: getInitData(),
-        displayName: getUN(),
-        avatar: cleanAv
-      }, done);
+      const timer = setTimeout(() => {
+        finish(false, "Koneksi ke server lambat. Coba muat ulang.");
+      }, 8000);
+
+      const sendHello = () => {
+        const { sp, ...cleanAv } = ME;
+        socket.emit("auth:hello", {
+          initData: getInitData(),
+          displayName: getUN(),
+          avatar: cleanAv
+        }, (res) => {
+          if (!res || !res.ok) {
+            return finish(false, (res && res.error) || "Gagal terhubung ke server");
+          }
+          myTgId = String(res.user.tgId);
+          PG.coins = res.user.coins || 0;
+          PG.xp = res.user.xp || 0;
+          PG.games = res.user.games || 0;
+          PG.wins = res.user.wins || 0;
+          PG.tasks = res.user.tasks || 0;
+          PG.unl = res.user.unlockedItems || [];
+          if (res.user.displayName) setUN(res.user.displayName);
+          if (res.user.avatar && typeof res.user.avatar === "object") {
+            Object.assign(ME, res.user.avatar);
+            ME.sp = {};
+          }
+          saveCfg();
+
+          const autoCode = getStartRoomCode();
+          if (autoCode) joinRoom(autoCode);
+          finish(true);
+        });
+      };
+
+      if (socket.connected) {
+        sendHello();
+      } else {
+        socket.once("connect", sendHello);
+        socket.once("connect_error", () => {
+          finish(false, "Server sedang offline / gagal terhubung.");
+        });
+      }
     });
   }
 
@@ -202,7 +230,6 @@
     box.scrollTop = box.scrollHeight;
   });
 
-  // Event asli dari gameEngine.js saat ronde dimulai
   socket.on("role:assigned", (data) => {
     latestSnapshot = null;
     const info = data.roleInfo || {};
@@ -215,7 +242,6 @@
     }
   });
 
-  // Event snapshot dari gameEngine.js (menyatukan posisi x, z sendiri dari entities)
   socket.on("match:snapshot", (snap) => {
     if (snap && snap.you && Array.isArray(snap.entities)) {
       const selfEnt = snap.entities.find((e) => String(e.id) === String(snap.you.id));
