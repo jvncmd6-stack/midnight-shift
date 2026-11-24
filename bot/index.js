@@ -4,6 +4,13 @@ const { Bot, InlineKeyboard } = require("grammy");
 const { PHASE } = require("../packages/shared/protocol");
 const { upsertUser, getLeaderboard, checkRateLimit } = require("../server/db");
 const { registerAdminCommands } = require("./admin");
+const {
+  buildWelcomeText,
+  buildGroupWelcomeText,
+  buildGuideKeyboard,
+  formatGuidePage,
+  registerGuideHandlers
+} = require("./guide");
 
 const BOT_TOKEN = process.env.BOT_TOKEN || "";
 const BOT_USERNAME = process.env.BOT_USERNAME || "";
@@ -47,6 +54,7 @@ function createTelegramBot(roomManager, io) {
 
   const bot = new Bot(BOT_TOKEN);
   registerAdminCommands(bot, roomManager, io);
+  registerGuideHandlers(bot, WEBAPP_URL);
 
   // /start [room_CODE]
   bot.command("start", async (ctx) => {
@@ -54,22 +62,22 @@ function createTelegramBot(roomManager, io) {
     const isGroup = ctx.chat.type === "group" || ctx.chat.type === "supergroup";
 
     if (isGroup) {
-      return ctx.reply(
-        "🔦 *MIDNIGHT SHIFT*\nPasar malam telah tutup. Ketik /play untuk membuka pendaftaran mabar di grup ini!",
-        { parse_mode: "Markdown" }
-      );
+      return ctx.reply(buildGroupWelcomeText(), { parse_mode: "Markdown" });
     }
 
     const startParam = payload.startsWith("room_") ? payload : "";
-    const kb = new InlineKeyboard().webApp(
-      startParam ? "🚪 GABUNG ROOM SEKARANG" : "🎮 MAIN MIDNIGHT SHIFT",
-      startParam ? `${WEBAPP_URL}?startapp=${encodeURIComponent(startParam)}` : WEBAPP_URL
-    );
+    const kb = new InlineKeyboard()
+      .webApp(
+        startParam ? "🚪 GABUNG ROOM SEKARANG" : "🎮 MAIN MIDNIGHT SHIFT",
+        startParam ? `${WEBAPP_URL}?startapp=${encodeURIComponent(startParam)}` : WEBAPP_URL
+      )
+      .row()
+      .callback("📖 BUKU PANDUAN & PERAN", "guide_flow");
 
-    await ctx.reply(
-      "🌃 *MIDNIGHT SHIFT*\nSembunyi jadi benda, kerjakan tugas, atau sabotase sebagai Cepu!\n\nTekan tombol di bawah untuk membuka Mini App:",
-      { parse_mode: "Markdown", reply_markup: kb }
-    );
+    await ctx.reply(buildWelcomeText(ctx.from?.first_name || "Pemain"), {
+      parse_mode: "Markdown",
+      reply_markup: kb
+    });
   });
 
   // /play atau /room — Buka pendaftaran lobi grup
@@ -198,18 +206,16 @@ function createTelegramBot(roomManager, io) {
     await ctx.reply(`🏆 *TOP 10 MIDNIGHT SHIFT*\n\n${lines.join("\n")}`, { parse_mode: "Markdown" });
   });
 
-  // /help
+  // /help — Buku panduan interaktif 4 halaman
   bot.command("help", async (ctx) => {
-    await ctx.reply(
-      "📖 *PERINTAH MIDNIGHT SHIFT*\n" +
-        "• `/play` — Buka pendaftaran mabar di grup\n" +
-        "• `/leave` — Batal ikut dari lobi grup\n" +
-        "• `/kick` — Keluarkan pemain (reply pesan, khusus Host)\n" +
-        "• `/join KODE` — Gabung ke room tertentu\n" +
-        "• `/profile` — Lihat koin, level & statistik\n" +
-        "• `/rank` — Papan peringkat pemain",
-      { parse_mode: "Markdown" }
-    );
+    const kb = buildGuideKeyboard("flow");
+    if (ctx.chat.type === "private" && WEBAPP_URL) {
+      kb.row().webApp("🎮 LANGSUNG MAIN SEKARANG", WEBAPP_URL);
+    }
+    await ctx.reply(formatGuidePage("flow"), {
+      parse_mode: "Markdown",
+      reply_markup: kb
+    });
   });
 
   // Tombol ✋ IKUT MAIN langsung di chat grup
