@@ -4,7 +4,6 @@ const crypto = require("crypto");
 const { PHASE, ERROR_CODES, sanitizeAvatar, sanitizeName } = require("../packages/shared/protocol");
 const { GameEngine } = require("./gameEngine");
 
-// Karakter kode room tanpa huruf/angka ambigu (O, 0, I, 1)
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 class RoomManager {
@@ -15,7 +14,6 @@ class RoomManager {
     this.userRoom = new Map(); // telegramId -> roomCode
     this.groupRoom = new Map(); // chatId -> roomCode
 
-    // Pembersih room kosong & grace period disconnect setiap 5 detik
     this.gcInterval = setInterval(() => this.cleanup(), 5000);
   }
 
@@ -32,7 +30,6 @@ class RoomManager {
   }
 
   createRoom({ hostUser, mode = "CLASSIC", isPublic = true, chatId = null, groupTitle = "" }) {
-    // Jika dari grup dan sudah ada lobby aktif di grup itu, kembalikan lobby tersebut
     if (chatId) {
       const existingCode = this.groupRoom.get(String(chatId));
       const existing = existingCode ? this.rooms.get(existingCode) : null;
@@ -65,21 +62,21 @@ class RoomManager {
       this.groupRoom.set(room.chatId, code);
     }
 
-    this.joinRoom(code, hostUser, null);
+    this.joinRoom(code, hostUser, null, Boolean(chatId));
     return { room, reused: false };
   }
 
-  joinRoom(code, user, socket) {
+  joinRoom(code, user, socket, fromGroupChat = false) {
     const cleanCode = String(code || "").toUpperCase().trim();
     const room = this.rooms.get(cleanCode);
     if (!room) return { error: "ROOM_NOT_FOUND", message: ERROR_CODES.ROOM_NOT_FOUND };
 
-    // Cek apakah pemain sudah berada di dalam room ini (Reconnect!)
     const existingMember = room.members.get(user.telegramId);
     if (existingMember) {
       existingMember.connected = true;
       existingMember.disconnectedAt = null;
-      existingMember.socketId = socket ? socket.id : null;
+      if (socket) existingMember.socketId = socket.id;
+      if (fromGroupChat) existingMember.ready = true;
       existingMember.name = sanitizeName(user.displayName);
       existingMember.avatar = sanitizeAvatar(user.avatar);
       this.userRoom.set(user.telegramId, cleanCode);
@@ -92,10 +89,10 @@ class RoomManager {
         room.engine.onPlayerReconnect(user.telegramId, socket);
       }
       this.broadcastRoomState(room);
+      this.triggerGroupUpdate(room);
       return { room, reconnected: true };
     }
 
-    // Jika sedang match berjalan, tolak join baru
     if (room.phase !== PHASE.WAITING) {
       return { error: "MATCH_IN_PROGRESS", message: ERROR_CODES.MATCH_IN_PROGRESS };
     }
@@ -104,7 +101,6 @@ class RoomManager {
       return { error: "ROOM_FULL", message: ERROR_CODES.ROOM_FULL };
     }
 
-    // Keluarkan dari room lama jika pindah room
     const prevCode = this.userRoom.get(user.telegramId);
     if (prevCode && prevCode !== cleanCode) {
       this.leaveRoom(user.telegramId);
@@ -115,7 +111,8 @@ class RoomManager {
       telegramId: user.telegramId,
       name: sanitizeName(user.displayName),
       avatar: sanitizeAvatar(user.avatar),
-      ready: room.members.size === 0, // Host otomatis ready
+      ready: room.members.size === 0 || fromGroupChat,
+      registeredFromChat: fromGroupChat,
       connected: true,
       disconnectedAt: null,
       socketId: socket ? socket.id : null,
@@ -140,7 +137,7 @@ class RoomManager {
 
   leaveRoom(telegramId, socket = null) {
     const code = this.userRoom.get(telegramId);
-    if (!code) return;
+    if (!code) return false;
     const room = this.rooms.get(code);
     this.userRoom.delete(telegramId);
 
@@ -148,15 +145,14 @@ class RoomManager {
       socket.leave(code);
       socket.data.roomCode = null;
     }
-    if (!room) return;
+    if (!room) return false;
 
     if (room.phase === PHASE.WAITING) {
       room.members.delete(telegramId);
       if (room.members.size === 0) {
-        this.destroyRoom(code);
-        return;
+        this.destroyRoom(code, true);
+        return true;
       }
-      // Migrasi Host otomatis jika host keluar
       if (room.hostTgId === telegramId) {
         const nextHost = room.members.values().next().value;
         room.hostTgId = nextHost.telegramId;
@@ -164,9 +160,12 @@ class RoomManager {
       }
       this.broadcastRoomState(room);
       this.triggerGroupUpdate(room);
+      return true;
     } else if (room.engine) {
       room.engine.onPlayerDisconnect(telegramId, true);
+      return true;
     }
+    return false;
   }
 
   handleSocketDisconnect(telegramId) {
@@ -178,15 +177,20 @@ class RoomManager {
     const member = room.members.get(telegramId);
     if (!member) return;
 
+    // Jika pemain mendaftar lewat tombol grup, biarkan tetap terdaftar di lobi
+    if (room.phase === PHASE.WAITING && member.registeredFromChat) {
+      member.socketId = null;
+      return;
+    }
+
     member.connected = false;
     member.disconnectedAt = Date.now();
     member.socketId = null;
 
     if (room.phase === PHASE.WAITING) {
-      // Beri waktu 15 detik di lobby sebelum dihapus (antisipasi refresh WebView)
       setTimeout(() => {
         const m = room.members.get(telegramId);
-        if (m && !m.connected && room.phase === PHASE.WAITING) {
+        if (m && !m.connected && !m.registeredFromChat && room.phase === PHASE.WAITING) {
           this.leaveRoom(telegramId);
         }
       }, 15000);
@@ -219,7 +223,6 @@ class RoomManager {
     if (typeof isPublic === "boolean" && !room.chatId) {
       room.isPublic = isPublic;
     }
-    // Reset ready selain host saat pengaturan berubah
     room.members.forEach((m) => {
       if (m.telegramId !== room.hostTgId) m.ready = false;
     });
@@ -242,10 +245,10 @@ class RoomManager {
     const code = this.userRoom.get(telegramId);
     const room = code ? this.rooms.get(code) : null;
     if (!room || room.phase !== PHASE.WAITING || room.hostTgId !== telegramId) {
-      return { error: "ACTION_DENIED", message: "Hanya host yang bisa memulai permainan." };
+      return { error: "ACTION_DENIED", message: "Hanya pembuat lobi (Host) yang bisa memulai permainan." };
     }
 
-    const activeMembers = Array.from(room.members.values()).filter((m) => m.connected);
+    const activeMembers = Array.from(room.members.values()).filter((m) => m.connected || m.registeredFromChat);
     if (!fillWithBots && activeMembers.length < 4) {
       return { error: "ACTION_DENIED", message: "Minimal 4 pemain untuk mode tanpa bot." };
     }
@@ -317,7 +320,7 @@ class RoomManager {
     }
   }
 
-  destroyRoom(code) {
+  destroyRoom(code, notifyClosed = false) {
     const room = this.rooms.get(code);
     if (!room) return;
     if (room.engine) room.engine.stop();
@@ -328,13 +331,16 @@ class RoomManager {
       if (this.userRoom.get(tgId) === code) this.userRoom.delete(tgId);
     });
     this.rooms.delete(code);
+    if (notifyClosed && room.chatId) {
+      this.onGroupCardUpdate(room, { closed: true });
+    }
   }
 
   cleanup() {
     const now = Date.now();
     this.rooms.forEach((room, code) => {
       if (room.phase === PHASE.WAITING && now - room.lastActivity > 15 * 60 * 1000) {
-        this.destroyRoom(code);
+        this.destroyRoom(code, true);
       }
     });
   }
