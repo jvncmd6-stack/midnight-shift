@@ -70,7 +70,7 @@ async function bootstrap() {
     scheduleGroupCardUpdate(bot, room, matchResult);
   });
 
-  bot = createTelegramBot(roomManager);
+  bot = createTelegramBot(roomManager, io);
 
   // Pasang endpoint Webhook Telegram jika BOT_TOKEN tersedia
   if (bot) {
@@ -92,6 +92,14 @@ async function bootstrap() {
     }
 
     const user = await upsertUser(identity);
+
+    if (user.isBanned) {
+      return reply.code(403).send({
+        error: "BANNED",
+        message: "Akun kamu telah diblokir oleh Admin."
+      });
+    }
+
     const token = signSessionToken(user);
 
     return {
@@ -134,6 +142,8 @@ async function bootstrap() {
       telegramId: session.tgId,
       displayName: session.name
     });
+    if (user.isBanned) return next(new Error("BANNED"));
+
     socket.data.user = user;
     next();
   });
