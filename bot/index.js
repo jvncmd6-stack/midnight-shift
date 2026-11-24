@@ -34,12 +34,12 @@ function buildMiniAppLink(startParam = "") {
 function buildLobbyKeyboard(room) {
   const kb = new InlineKeyboard();
   if (room.phase === PHASE.WAITING) {
-    kb.callback("✋ IKUT MAIN", `reg_${room.code}`)
-      .callback("❌ BATAL", `unreg_${room.code}`)
+    kb.text("✋ IKUT MAIN", `reg_${room.code}`)
+      .text("❌ BATAL", `unreg_${room.code}`)
       .row()
       .url("🎮 BUKA MINI APP", buildMiniAppLink(`room_${room.code}`))
       .row()
-      .callback("🚀 MULAI GAME (HOST)", `start_${room.code}`);
+      .text("🚀 MULAI GAME (HOST)", `start_${room.code}`);
   } else {
     kb.url("🎮 MASUK KE ARENA GAME", buildMiniAppLink(`room_${room.code}`));
   }
@@ -72,7 +72,7 @@ function createTelegramBot(roomManager, io) {
         startParam ? `${WEBAPP_URL}?startapp=${encodeURIComponent(startParam)}` : WEBAPP_URL
       )
       .row()
-      .callback("📖 BUKU PANDUAN & PERAN", "guide_flow");
+      .text("📖 BUKU PANDUAN & PERAN", "guide_flow");
 
     await ctx.reply(buildWelcomeText(ctx.from?.first_name || "Pemain"), {
       parse_mode: "Markdown",
