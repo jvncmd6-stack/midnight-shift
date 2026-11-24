@@ -4,6 +4,7 @@
   const { spr } = W.MS_SPR;
   const { wc, lc, LW, LH, GL, BULBS, blocked, drawSky, drawAvatarLabel, drawPropSprite, drawMinimap, stepStreetTraffic, renderStreetLayer, renderStreetLights } = W.MS_WORLD;
   const { openTaskModal } = W.MS_TASKS;
+  const { audioOn, applyAudioCfg, MU } = W.MS_AUDIO;
   const NET = W.MS_NET;
 
   const cv = $("c"), ctx = cv.getContext("2d");
@@ -14,6 +15,9 @@
 
   const LM = { x: 24, z: 12.6, vx: 0, vz: 0, wd: 0, dir: 0, jy: 0, vy: 0, em: 0, et: 0, mv: false };
   const cam = { x: 0, y: 0, on: 0 };
+
+  addEventListener("pointerdown", audioOn);
+  addEventListener("keydown", audioOn);
 
   function resize() {
     const pt = innerHeight > innerWidth;
@@ -33,6 +37,8 @@
     scene = id;
     document.body.className = id;
     cam.on = 0;
+    MU.mode = id;
+    MU.force = 1;
   }
 
   /* ---------- Splash & Auth ---------- */
@@ -55,9 +61,14 @@
     }
   });
 
-  $("mCreate").onclick = () => { NET.createRoom("CLASSIC", true); vib(10); };
+  $("mCreate").onclick = () => {
+    audioOn();
+    NET.createRoom("CLASSIC", true);
+    vib(10);
+  };
 
   $("mJoin").onclick = async () => {
+    audioOn();
     openSheet("<h2>GABUNG ROOM</h2><p>Memuat daftar room...</p>");
     const rooms = await NET.fetchPublicRooms();
     const listHtml = rooms.length
@@ -81,8 +92,16 @@
     $("bJoinClose").onclick = closeSheet;
   };
 
-  $("mAv").onclick = () => { pdir = 0; show("creator"); drawOpts(); vib(10); };
+  $("mAv").onclick = () => {
+    audioOn();
+    pdir = 0;
+    show("creator");
+    drawOpts();
+    vib(10);
+  };
+
   $("mStat").onclick = () => {
+    audioOn();
     openSheet(
       `<h2>STATISTIK</h2><div style="line-height:2;text-align:left">` +
       `KOIN: ${PG.coins}<br>LEVEL: ${Math.floor(PG.xp / 100) + 1} (${PG.xp} XP)<br>` +
@@ -91,8 +110,11 @@
     );
     $("sk2").onclick = closeSheet;
   };
-  $("mSet").onclick = () => openSet();
+
+  $("mSet").onclick = () => { audioOn(); openSet(); };
+
   $("mHow").onclick = () => {
+    audioOn();
     openSheet(
       `<h2>CARA MAIN</h2><div style="line-height:1.9;text-align:left;margin-bottom:8px">` +
       `1. Sembunyi & tekan NYAMAR jadi benda<br>2. Selesaikan 6 tugas di ruangan<br>` +
@@ -106,9 +128,11 @@
   function sw(arr, key) {
     return arr.map((c, i) => `<button class="sw${ME[key] === i ? " on" : ""}" style="background:${c}" data-k="${key}" data-v="${i}"></button>`).join("");
   }
+
   function ch(cat, key) {
-    return CAT[cat].map((n, i) => ok(n[1]) ? `<button class="chip${ME[key] === i ? " on" : ""}" data-k="${key}" data-v="${i}">${n[0]}${owned(cat, i) ? "" : " $" + LOCK[cat][i]}</button>` : "").join("");
+    return CAT[cat].map((n, i) => ok(n[1]) ? `<button class="chip${ME[key] === i ? " on" : ""}" data-k="${key}" data-v="${i}">${n[0]}${n[1] === "u" ? " ★" : ""}${owned(cat, i) ? "" : " $" + LOCK[cat][i]}</button>` : "").join("");
   }
+
   function drawOpts() {
     $("coin").textContent = `KOIN: ${PG.coins}${cmsg ? " · " + cmsg : ""}`;
     cmsg = "";
@@ -117,41 +141,78 @@
     if (currentTab === 0) {
       h = `<button class="chip${ME.g === "f" ? " on" : ""}" data-g="f">♀ CEWE</button>` +
           `<button class="chip${ME.g === "m" ? " on" : ""}" data-g="m">♂ COWO</button>` +
+          `<div style="width:100%;opacity:.75;line-height:1.8;margin-top:6px">★ = Unisex (bisa dipakai semua)</div>` +
           `<div class="lab">NAMA KARAKTER</div><div class="rw"><input class="ni" id="cn" maxlength="12" value="${getUN()}"></div>`;
-    } else if (currentTab === 1) h = `<div class="lab">WARNA KULIT</div><div class="rw">${sw(SKIN, "skin")}</div>`;
-    else if (currentTab === 2) h = `<div class="lab">RAMBUT</div><div class="rw">${ch("hair", "hair")}</div><div class="lab">WARNA</div><div class="rw">${sw(HAIR, "hairC")}</div>`;
-    else if (currentTab === 3) h = `<div class="lab">BAJU</div><div class="rw">${ch("shirt", "shirt")}</div><div class="lab">WARNA</div><div class="rw">${sw(CLR, "shirtC")}</div>`;
-    else if (currentTab === 4) h = `<div class="lab">BAWAHAN</div><div class="rw">${ch("bot", "bot")}</div><div class="lab">WARNA</div><div class="rw">${sw(CLR, "botC")}</div>`;
-    else if (currentTab === 5) h = `<div class="lab">AKSESORI</div><div class="rw">${ch("acc", "acc")}</div>`;
+    } else if (currentTab === 1) {
+      h = `<div class="lab">WARNA KULIT</div><div class="rw">${sw(SKIN, "skin")}</div>`;
+    } else if (currentTab === 2) {
+      h = `<div class="lab">GAYA RAMBUT</div><div class="rw">${ch("hair", "hair")}</div><div class="lab">WARNA RAMBUT</div><div class="rw">${sw(HAIR, "hairC")}</div>`;
+    } else if (currentTab === 3) {
+      h = `<div class="lab">BAJU (CASUAL · NATAL · PUNK)</div><div class="rw">${ch("shirt", "shirt")}</div><div class="lab">WARNA BAJU</div><div class="rw">${sw(CLR, "shirtC")}</div>`;
+    } else if (currentTab === 4) {
+      h = `<div class="lab">BAWAHAN</div><div class="rw">${ch("bot", "bot")}</div><div class="lab">WARNA BAWAHAN</div><div class="rw">${sw(CLR, "botC")}</div>`;
+    } else if (currentTab === 5) {
+      h = `<div class="lab">AKSESORI</div><div class="rw">${ch("acc", "acc")}</div>`;
+    }
     $("opts").innerHTML = h;
-    if ($("cn")) $("cn").oninput = (e) => setUN(e.target.value);
+    if ($("cn")) {
+      $("cn").oninput = (e) => {
+        setUN(e.target.value);
+        $("who").textContent = tgw ? `Masuk sebagai ${getUN()}` : `Halo, ${getUN()}`;
+      };
+    }
   }
 
   $("creator").addEventListener("click", async (e) => {
     const b = e.target.closest("button");
     if (!b) return;
-    if (b.dataset.t !== undefined) { currentTab = +b.dataset.t; drawOpts(); }
-    else if (b.dataset.g) { Object.assign(ME, PRE[b.dataset.g]); ME.sp = {}; drawOpts(); }
-    else if (b.dataset.k) {
+    vib(6);
+    if (b.dataset.t !== undefined) {
+      currentTab = +b.dataset.t;
+      drawOpts();
+    } else if (b.dataset.g) {
+      Object.assign(ME, PRE[b.dataset.g]);
+      ME.sp = {};
+      drawOpts();
+    } else if (b.dataset.k) {
       const kk = b.dataset.k, vv = +b.dataset.v, lp = (LOCK[kk] || {})[vv];
       if (lp && !owned(kk, vv)) {
         const res = await NET.saveCustomizationServer({ buyItemKey: `${kk}:${vv}`, price: lp });
-        if (res && res.user) { PG.coins = res.user.coins; PG.unl = res.user.unlockedItems; cmsg = `DIBELI -${lp}`; }
-        else { cmsg = "KOIN KURANG"; drawOpts(); return; }
+        if (res && res.user) {
+          PG.coins = res.user.coins;
+          PG.unl = res.user.unlockedItems;
+          cmsg = `DIBELI -${lp}`;
+        } else {
+          cmsg = "KOIN KURANG";
+          drawOpts();
+          return;
+        }
       }
-      ME[kk] = vv; ME.sp = {}; saveCfg(); drawOpts();
+      ME[kk] = vv;
+      ME.sp = {};
+      saveCfg();
+      drawOpts();
     }
   });
 
   const dirOrder = [0, 2, 1, 3];
   $("rr").onclick = () => { pdir = dirOrder[(dirOrder.indexOf(pdir) + 1) % 4]; };
   $("rl").onclick = () => { pdir = dirOrder[(dirOrder.indexOf(pdir) + 3) % 4]; };
-  $("rz").onclick = () => { const b = rav(); Object.assign(ME, b); TAB_KEYS.forEach((c) => { if (!owned(c, ME[c])) ME[c] = 0; }); ME.sp = {}; drawOpts(); };
+  $("rz").onclick = () => {
+    const b = rav();
+    Object.assign(ME, b);
+    TAB_KEYS.forEach((c) => { if (!owned(c, ME[c])) ME[c] = 0; });
+    ME.sp = {};
+    saveCfg();
+    drawOpts();
+    vib(10);
+  };
   $("ok").onclick = async () => {
     saveCfg();
     const { sp, ...cleanAv } = ME;
     await NET.saveCustomizationServer({ displayName: getUN(), avatar: cleanAv });
-    if (NET.getRoom()) show("lobby"); else show("splash");
+    if (NET.getRoom()) show("lobby");
+    else show("splash");
   };
 
   /* ---------- Lobi Multiplayer & Tombol Undang ---------- */
@@ -201,12 +262,18 @@
     const modes = ["CLASSIC", "QUICK", "CHAOS"];
     NET.updateRoomSettings({ mode: modes[(modes.indexOf(r.mode) + 1) % modes.length] });
   };
-  $("bBotFill").onclick = () => { fillWithBots = !fillWithBots; $("bBotFill").textContent = `BOT: ${fillWithBots ? "NYALA" : "MATI"}`; };
+  $("bBotFill").onclick = () => {
+    fillWithBots = !fillWithBots;
+    $("bBotFill").textContent = `BOT: ${fillWithBots ? "NYALA" : "MATI"}`;
+  };
   $("go").onclick = () => NET.startMatch(fillWithBots);
 
   $("bSendChat").onclick = () => {
     const inp = $("chatInp");
-    if (inp.value.trim()) { NET.sendChat(inp.value.trim()); inp.value = ""; }
+    if (inp.value.trim()) {
+      NET.sendChat(inp.value.trim());
+      inp.value = "";
+    }
   };
   $("bQChat").onclick = () => {
     const btns = QUICK_CHATS.map((q, i) => `<button class="chip" data-qi="${i}">${q}</button>`).join("");
@@ -217,10 +284,60 @@
     $("qcX").onclick = closeSheet;
   };
 
-  $("lj").onclick = () => { if (LM.jy <= 0) { LM.vy = 95; LM.jy = 0.01; } };
-  $("e1").onclick = () => { LM.em = 1; LM.et = 0; };
-  $("e2").onclick = () => { LM.em = 2; LM.et = 0; };
-  $("e3").onclick = () => { LM.em = 3; LM.et = 0; };
+  $("lj").onclick = () => { if (LM.jy <= 0) { LM.vy = 95; LM.jy = 0.01; vib(8); } };
+  $("e1").onclick = () => { LM.em = 1; LM.et = 0; vib(10); };
+  $("e2").onclick = () => { LM.em = 2; LM.et = 0; vib(10); };
+  $("e3").onclick = () => { LM.em = 3; LM.et = 0; vib(10); };
+
+  /* ---------- Pengaturan Lengkap ---------- */
+  const LV = ["MATI", "PELAN", "SEDANG", "KERAS"];
+  const SGN = ["OTOMATIS", "MIDNIGHT CITY", "SEMBUNYI", "LOBI SANTAI", "KEJAR-KEJARAN"];
+
+  function openSet() {
+    audioOn();
+    const chp = (key, arr) =>
+      arr.map((l, i) => `<button class="chip${CFG[key] === i ? " on" : ""}" data-s="${key}" data-v="${i}">${l}</button>`).join("");
+    const sec = (l, x) => `<div class="lab">${l}</div><div class="rw">${x}</div>`;
+
+    $("sb").innerHTML =
+      sec("NAMA KARAKTER", `<input class="ni" id="setNm" maxlength="12" value="${getUN()}">`) +
+      sec("GETAR", chp("vib", ["MATI", "NYALA"])) +
+      sec("EFEK SUARA", chp("sfx", LV)) +
+      sec("VOLUME MUSIK", chp("mus", LV)) +
+      sec("PILIHAN LAGU", chp("song", SGN)) +
+      sec("KECERAHAN MAP", chp("br", ["NORMAL", "TERANG", "SANGAT TERANG"])) +
+      `<div class="kh" style="margin:8px 0">OTOMATIS: LOBI SANTAI, SEMBUNYI SAAT MAIN, KEJAR-KEJARAN SAAT SATPAM DEKAT</div>` +
+      `<button class="pb d" id="sr">RESET PENGATURAN</button>`;
+
+    $("set").classList.remove("hide");
+
+    $("setNm").oninput = (e) => {
+      setUN(e.target.value);
+      $("who").textContent = tgw ? `Masuk sebagai ${getUN()}` : `Halo, ${getUN()}`;
+    };
+
+    document.querySelectorAll("#sb .chip[data-s]").forEach((b) => {
+      b.onclick = () => {
+        CFG[b.dataset.s] = +b.dataset.v;
+        applyAudioCfg();
+        if (b.dataset.s === "vib") vib(60);
+        if (b.dataset.s === "song" || b.dataset.s === "mus") MU.force = 1;
+        openSet();
+      };
+    });
+
+    $("sr").onclick = () => {
+      Object.assign(CFG, { vib: 1, sfx: 2, mus: 2, song: 0, br: 0 });
+      MU.force = 1;
+      applyAudioCfg();
+      openSet();
+    };
+  }
+
+  $("sx").onclick = () => {
+    $("set").classList.add("hide");
+    if ($("cn")) $("cn").value = getUN();
+  };
 
   /* ---------- Match Events & HUD ---------- */
   function onMatchStarted(info) {
@@ -229,6 +346,7 @@
     $("role").textContent = info.roleName.toUpperCase();
     $("bDis").classList.toggle("hide", info.team === "GUARD");
     toast(`PERAN KAMU: ${info.roleName.toUpperCase()}`, info.team === "GUARD" ? "b" : "g");
+    vib(25);
   }
 
   function onMeetingUpdate(m) {
@@ -261,7 +379,10 @@
     const snap = NET.getSnapshot();
     if (!snap) return;
     const me = snap.you;
-    if (me.team === "GUARD") { NET.sendPlayerAction("ATTACK"); return; }
+    if (me.team === "GUARD") {
+      NET.sendPlayerAction("ATTACK");
+      return;
+    }
 
     const nearTerm = (snap.terminals || []).find((t) => !t.done && Math.hypot(t.x - me.x, t.z - me.z) < 2.2);
     if (nearTerm) {
@@ -269,7 +390,10 @@
       else openTaskModal(nearTerm.k, me.role === "TECHNICIAN", () => NET.sendPlayerAction("TASK_DONE", { termIdx: nearTerm.idx }));
       return;
     }
-    if (Math.hypot(32 - me.x, 22 - me.z) < 2.4) { NET.sendPlayerAction("MEETING"); return; }
+    if (Math.hypot(32 - me.x, 22 - me.z) < 2.4) {
+      NET.sendPlayerAction("MEETING");
+      return;
+    }
     NET.sendPlayerAction("ABILITY");
   };
 
@@ -279,7 +403,8 @@
   function moveStick(e) {
     const r = st.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
     const dx2 = e.clientX - cx, dy = e.clientY - cy, m = r.width / 2 - 6, d = Math.hypot(dx2, dy) || 1, f = Math.min(1, d / m);
-    jx = (dx2 / d) * f; jy = (dy / d) * f;
+    jx = (dx2 / d) * f;
+    jy = (dy / d) * f;
     $("knob").style.transform = `translate(${jx * m}px,${jy * m}px)`;
   }
   st.addEventListener("pointerdown", (e) => { sid = e.pointerId; st.setPointerCapture(sid); moveStick(e); });
@@ -298,55 +423,11 @@
     if (q === "e" && scene === "hud") $("bDis").click();
     if (q === "f" && scene === "hud") $("bAct").click();
   });
-  addEventListener("keyup", (e) => { const q = e.key.toLowerCase(); delete keys[q]; if (AR[q]) delete keys[AR[q]]; });
-
-const LV = ["MATI", "PELAN", "SEDANG", "KERAS"];
-  const SGN = ["OTOMATIS", "MIDNIGHT CITY", "SEMBUNYI", "LOBI SANTAI", "KEJAR-KEJARAN"];
-
-  function openSet() {
-    W.MS_AUDIO.audioOn();
-    const chp = (key, arr) =>
-      arr.map((l, i) => `<button class="chip${CFG[key] === i ? " on" : ""}" data-s="${key}" data-v="${i}">${l}</button>`).join("");
-    const sec = (l, x) => `<div class="lab">${l}</div><div class="rw">${x}</div>`;
-
-    $("sb").innerHTML =
-      sec("NAMA KARAKTER", `<input class="ni" id="setNm" maxlength="12" value="${getUN()}">`) +
-      sec("GETAR", chp("vib", ["MATI", "NYALA"])) +
-      sec("EFEK SUARA", chp("sfx", LV)) +
-      sec("VOLUME MUSIK", chp("mus", LV)) +
-      sec("PILIHAN LAGU", chp("song", SGN)) +
-      sec("KECERAHAN MAP", chp("br", ["NORMAL", "TERANG", "SANGAT TERANG"])) +
-      `<div class="kh" style="margin:8px 0">OTOMATIS: LOBI SANTAI, SEMBUNYI SAAT MAIN, KEJAR-KEJARAN SAAT SATPAM DEKAT</div>` +
-      `<button class="pb d" id="sr">RESET PENGATURAN</button>`;
-
-    $("set").classList.remove("hide");
-
-    $("setNm").oninput = (e) => {
-      setUN(e.target.value);
-      $("who").textContent = tgw ? `Masuk sebagai ${getUN()}` : `Halo, ${getUN()}`;
-    };
-
-    document.querySelectorAll("#sb .chip[data-s]").forEach((b) => {
-      b.onclick = () => {
-        CFG[b.dataset.s] = +b.dataset.v;
-        W.MS_AUDIO.applyAudioCfg();
-        if (b.dataset.s === "vib") vib(60);
-        if (b.dataset.s === "song" || b.dataset.s === "mus") W.MS_AUDIO.MU.force = 1;
-        openSet();
-      };
-    });
-
-    $("sr").onclick = () => {
-      Object.assign(CFG, { vib: 1, sfx: 2, mus: 2, song: 0, br: 0 });
-      W.MS_AUDIO.MU.force = 1;
-      W.MS_AUDIO.applyAudioCfg();
-      openSet();
-    };
-  }
-  $("sx").onclick = () => {
-    $("set").classList.add("hide");
-    if ($("cn")) $("cn").value = getUN();
-  };
+  addEventListener("keyup", (e) => {
+    const q = e.key.toLowerCase();
+    delete keys[q];
+    if (AR[q]) delete keys[AR[q]];
+  });
 
   /* ---------- Main Loop ---------- */
   let last = performance.now(), netSendAcc = 0;
@@ -379,8 +460,14 @@ const LV = ["MATI", "PELAN", "SEDANG", "KERAS"];
         LM.wd += 4.2 * dt;
         LM.dir = Math.abs(ix) > Math.abs(iy) ? (ix > 0 ? 2 : 3) : (iy > 0 ? 0 : 1);
       }
-      if (LM.jy > 0) { LM.vy -= 300 * dt; LM.jy = Math.max(0, LM.jy + LM.vy * dt); }
-      if (LM.em) { LM.et += dt; if (LM.et > 2.2) LM.em = 0; }
+      if (LM.jy > 0) {
+        LM.vy -= 300 * dt;
+        LM.jy = Math.max(0, LM.jy + LM.vy * dt);
+      }
+      if (LM.em) {
+        LM.et += dt;
+        if (LM.et > 2.2) LM.em = 0;
+      }
 
       netSendAcc += dt;
       if (netSendAcc >= 0.06) {
@@ -413,6 +500,17 @@ const LV = ["MATI", "PELAN", "SEDANG", "KERAS"];
     $("bSpr").classList.toggle("off", me.sprintCd > 0);
     $("bSpr").textContent = me.sprintCd > 0 ? `${Math.ceil(me.sprintCd)}S` : "LARI";
 
+    // Ganti musik otomatis ke mode kejar-kejaran jika Satpam sangat dekat
+    if (me.team !== "GUARD") {
+      const guards = (snap.entities || []).filter((e) => e.team === "GUARD" && !e.dead);
+      const minDist = guards.length ? Math.min(...guards.map((g) => Math.hypot(g.x - me.x, g.z - me.z))) : 99;
+      const desiredMode = minDist < 9 ? "chase" : "hud";
+      if (MU.mode !== desiredMode) {
+        MU.mode = desiredMode;
+        MU.force = 1;
+      }
+    }
+
     if (me.team === "GUARD") {
       $("bAct").textContent = "PUKUL";
       $("bAct").classList.toggle("off", me.stun > 0);
@@ -430,8 +528,12 @@ const LV = ["MATI", "PELAN", "SEDANG", "KERAS"];
     const ctx_ = mw <= VW ? (mw - VW) / 2 : cl(fx * T - VW / 2, 0, mw - VW);
     const cty_ = mh <= VH ? (mh - VH) / 2 : cl(fz * T - VH / 2, 0, mh - VH);
     if (!cam.on) { cam.x = ctx_; cam.y = cty_; cam.on = 1; }
-    else { cam.x += (ctx_ - cam.x) * (1 - Math.exp(-dt * 10)); cam.y += (cty_ - cam.y) * (1 - Math.exp(-dt * 10)); }
-    camX = Math.round(cam.x); camY = Math.round(cam.y);
+    else {
+      cam.x += (ctx_ - cam.x) * (1 - Math.exp(-dt * 10));
+      cam.y += (cty_ - cam.y) * (1 - Math.exp(-dt * 10));
+    }
+    camX = Math.round(cam.x);
+    camY = Math.round(cam.y);
 
     ctx.fillStyle = "#0b0716";
     ctx.fillRect(0, 0, VW, VH);
@@ -443,10 +545,16 @@ const LV = ["MATI", "PELAN", "SEDANG", "KERAS"];
       NET.lobbyPeers.forEach((p) => {
         p.x += (p.tx - p.x) * 0.25;
         p.z += (p.tz - p.z) * 0.25;
-        drawList.push({ y: p.z, f: () => drawAvatarLabel(ctx, p.avatar, p.x * T - camX, p.z * T - camY, p.dir, 0, p.name, "#fff", p.jy) });
+        drawList.push({
+          y: p.z,
+          f: () => drawAvatarLabel(ctx, p.avatar, p.x * T - camX, p.z * T - camY, p.dir, 0, p.name, "#fff", p.jy)
+        });
       });
       const fr = LM.mv ? [1, 0, 2, 0][Math.floor(LM.wd * 2.2) % 4] : 0;
-      drawList.push({ y: LM.z, f: () => drawAvatarLabel(ctx, ME, LM.x * T - camX, LM.z * T - camY, LM.dir, fr, getUN(), "#ffd23f", LM.jy) });
+      drawList.push({
+        y: LM.z,
+        f: () => drawAvatarLabel(ctx, ME, LM.x * T - camX, LM.z * T - camY, LM.dir, fr, getUN(), "#ffd23f", LM.jy)
+      });
     } else if (snap) {
       const wf = (Math.floor(tclock * 8) % 2) + 1;
       (snap.props || []).forEach((p) => drawList.push({ y: p.z, f: () => drawPropSprite(ctx, p.type, p.x * T - camX, p.z * T - camY) }));
@@ -462,13 +570,13 @@ const LV = ["MATI", "PELAN", "SEDANG", "KERAS"];
         });
       });
 
-      // Terminal & Tombol Rapat Merah
       (snap.terminals || []).forEach((t) => {
         drawList.push({
           y: t.z,
           f: () => {
             const px = Math.round(t.x * T - camX), py = Math.round(t.z * T - camY);
-            ctx.fillStyle = "#1d2430"; ctx.fillRect(px - 6, py - 16, 12, 16);
+            ctx.fillStyle = "#1d2430";
+            ctx.fillRect(px - 6, py - 16, 12, 16);
             ctx.fillStyle = t.done ? "#5ee38b" : Math.sin(tclock * 6) > 0 ? "#ffd23f" : "#5cc8ff";
             ctx.fillRect(px - 4, py - 13, 8, 6);
           }
@@ -479,8 +587,10 @@ const LV = ["MATI", "PELAN", "SEDANG", "KERAS"];
         y: 22,
         f: () => {
           const px = Math.round(32 * T - camX), py = Math.round(22 * T - camY);
-          ctx.fillStyle = "#6b1a22"; ctx.fillRect(px - 9, py - 4, 18, 8);
-          ctx.fillStyle = Math.sin(tclock * 5) > 0 ? "#ff5d6c" : "#c23846"; ctx.fillRect(px - 6, py - 8, 12, 8);
+          ctx.fillStyle = "#6b1a22";
+          ctx.fillRect(px - 9, py - 4, 18, 8);
+          ctx.fillStyle = Math.sin(tclock * 5) > 0 ? "#ff5d6c" : "#c23846";
+          ctx.fillRect(px - 6, py - 8, 12, 8);
         }
       });
 
@@ -489,8 +599,10 @@ const LV = ["MATI", "PELAN", "SEDANG", "KERAS"];
           y: z,
           f: () => {
             const px = Math.round(62.5 * T - camX), py = Math.round(z * T - camY);
-            ctx.fillStyle = "#222"; ctx.fillRect(px - 10, py - 24, 4, 48);
-            ctx.fillStyle = snap.gatesOpen ? "#5ee38b" : "#ff5d6c"; ctx.fillRect(px - 6, py - 20, 3, 40);
+            ctx.fillStyle = "#222";
+            ctx.fillRect(px - 10, py - 24, 4, 48);
+            ctx.fillStyle = snap.gatesOpen ? "#5ee38b" : "#ff5d6c";
+            ctx.fillRect(px - 6, py - 20, 3, 40);
           }
         });
       });
@@ -502,11 +614,11 @@ const LV = ["MATI", "PELAN", "SEDANG", "KERAS"];
     if (!isGame) {
       renderStreetLights(ctx, camX, camY, VW, VH, tclock);
     } else if (snap && snap.you) {
-      // Lampu hias aula & kegelapan dengan lubang pandang pemain
       BULBS.forEach((b) => {
         const bx = b[0] - camX, by = b[1] - camY;
         if (bx >= 0 && bx <= VW && by >= 0 && by <= VH) {
-          ctx.fillStyle = b[2]; ctx.fillRect(bx, by, 2, 2);
+          ctx.fillStyle = b[2];
+          ctx.fillRect(bx, by, 2, 2);
         }
       });
 
@@ -518,7 +630,9 @@ const LV = ["MATI", "PELAN", "SEDANG", "KERAS"];
       dx.globalCompositeOperation = "destination-out";
       [62, 46, 30].forEach((r, idx) => {
         dx.fillStyle = `rgba(0,0,0,${0.25 + idx * 0.25})`;
-        dx.beginPath(); dx.arc(px2, py2, r, 0, 6.3); dx.fill();
+        dx.beginPath();
+        dx.arc(px2, py2, r, 0, 6.3);
+        dx.fill();
       });
       ctx.drawImage(dm, 0, 0);
     }
