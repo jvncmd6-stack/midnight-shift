@@ -2,7 +2,7 @@
 
 const { Pool } = require("pg");
 const Redis = require("ioredis");
-const { sanitizeAvatar, sanitizeName } = require("../packages/shared/protocol");
+const { DEFAULT_AVATAR, sanitizeAvatar, sanitizeName } = require("../packages/shared/protocol");
 
 const DATABASE_URL = process.env.DATABASE_URL || "";
 const REDIS_URL = process.env.REDIS_URL || "";
@@ -10,44 +10,25 @@ const REDIS_URL = process.env.REDIS_URL || "";
 let pool = null;
 let redis = null;
 
-// Fallback memori lokal jika Redis belum dipasang saat development
-const memCache = new Map();
+// Fallback penyimpanan sementara jika dev lokal tanpa Postgres/Redis
+const memUsers = new Map();
+const memRateLimits = new Map();
 
 async function initDatabases() {
-  if (REDIS_URL) {
-    redis = new Redis(REDIS_URL, {
-      maxRetriesPerRequest: 3,
-      enableReadyCheck: true
-    });
-    redis.on("error", (err) => console.error("[Redis Error]", err.message));
-  } else {
-    console.warn("[DB] REDIS_URL tidak ditemukan, memakai memory fallback (single-instance).");
-  }
-
   if (DATABASE_URL) {
     pool = new Pool({
       connectionString: DATABASE_URL,
       ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
-      max: 15,
-      idleTimeoutMillis: 30000
+      max: 15
     });
-    await runMigrations();
-  } else {
-    console.warn("[DB] DATABASE_URL tidak ditemukan, progres pemain tidak tersimpan permanen.");
-  }
-}
 
-async function runMigrations() {
-  const client = await pool.connect();
-  try {
-    await client.query(`
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
         telegram_id VARCHAR(64) UNIQUE NOT NULL,
         username VARCHAR(64) DEFAULT '',
-        display_name VARCHAR(32) NOT NULL DEFAULT 'Pemain',
-        avatar JSONB NOT NULL DEFAULT '{"g":"f","skin":1,"hair":1,"hairC":0,"shirt":2,"shirtC":0,"bot":1,"botC":7,"acc":0}'::jsonb,
-        unlocked_items JSONB NOT NULL DEFAULT '[]'::jsonb,
+        display_name VARCHAR(32) NOT NULL,
+        avatar_json JSONB NOT NULL DEFAULT '{}'::jsonb,
         coins INTEGER NOT NULL DEFAULT 0,
         xp INTEGER NOT NULL DEFAULT 0,
         games_played INTEGER NOT NULL DEFAULT 0,
@@ -55,125 +36,154 @@ async function runMigrations() {
         tasks_done INTEGER NOT NULL DEFAULT 0,
         cepu_ejected INTEGER NOT NULL DEFAULT 0,
         best_escape_sec INTEGER NOT NULL DEFAULT 0,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        unlocked_items JSONB NOT NULL DEFAULT '[]'::jsonb,
+        is_banned BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
       );
 
-      CREATE TABLE IF NOT EXISTS reward_transactions (
-        id SERIAL PRIMARY KEY,
+      CREATE TABLE IF NOT EXISTS match_rewards (
         match_id VARCHAR(64) NOT NULL,
         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        coins_earned INTEGER NOT NULL DEFAULT 0,
-        xp_earned INTEGER NOT NULL DEFAULT 0,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        UNIQUE(match_id, user_id)
-      );
-
-      CREATE TABLE IF NOT EXISTS group_lobbies (
-        chat_id VARCHAR(64) PRIMARY KEY,
-        room_code VARCHAR(12) NOT NULL,
-        message_id BIGINT,
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        coins_earned INTEGER NOT NULL,
+        xp_earned INTEGER NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        PRIMARY KEY (match_id, user_id)
       );
     `);
-  } finally {
-    client.release();
+
+    // Pastikan kolom is_banned ada jika tabel users sudah dibuat sebelumnya
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_banned BOOLEAN NOT NULL DEFAULT FALSE;`);
+    console.log("[DB] PostgreSQL siap.");
+  } else {
+    console.warn("[DB] DATABASE_URL kosong, menggunakan in-memory fallback.");
+  }
+
+  if (REDIS_URL) {
+    redis = new Redis(REDIS_URL, { maxRetriesPerRequest: 2 });
+    redis.on("error", (err) => console.error("[Redis Error]", err.message));
+    console.log("[DB] Redis siap.");
   }
 }
 
-/**
- * Ambil atau buat profil pemain saat login Telegram
- */
-async function upsertUser({ telegramId, username, displayName }) {
+function mapUserRow(row) {
+  return {
+    id: row.id,
+    telegramId: row.telegram_id,
+    username: row.username || "",
+    displayName: row.display_name,
+    avatar: sanitizeAvatar(row.avatar_json),
+    coins: row.coins || 0,
+    xp: row.xp || 0,
+    gamesPlayed: row.games_played || 0,
+    wins: row.wins || 0,
+    tasksDone: row.tasks_done || 0,
+    cepuEjected: row.cepu_ejected || 0,
+    bestEscapeSec: row.best_escape_sec || 0,
+    unlockedItems: Array.isArray(row.unlocked_items) ? row.unlocked_items : [],
+    isBanned: Boolean(row.is_banned)
+  };
+}
+
+async function upsertUser({ telegramId, username = "", displayName = "Pemain" }) {
+  const cleanName = sanitizeName(displayName);
+  const cleanUser = String(username || "").slice(0, 64);
+
   if (!pool) {
-    const key = `user:${telegramId}`;
-    if (!memCache.has(key)) {
-      memCache.set(key, {
-        id: Math.floor(Math.random() * 1000000),
+    let u = memUsers.get(telegramId);
+    if (!u) {
+      u = {
+        id: memUsers.size + 1,
         telegramId,
-        username: username || "",
-        displayName: sanitizeName(displayName),
-        avatar: sanitizeAvatar(null),
-        unlockedItems: [],
+        username: cleanUser,
+        displayName: cleanName,
+        avatar: { ...DEFAULT_AVATAR },
         coins: 0,
         xp: 0,
         gamesPlayed: 0,
         wins: 0,
         tasksDone: 0,
         cepuEjected: 0,
-        bestEscapeSec: 0
-      });
+        bestEscapeSec: 0,
+        unlockedItems: [],
+        isBanned: false
+      };
+      memUsers.set(telegramId, u);
     }
-    return memCache.get(key);
+    return u;
   }
 
   const res = await pool.query(
-    `INSERT INTO users (telegram_id, username, display_name)
-     VALUES ($1, $2, $3)
-     ON CONFLICT (telegram_id) DO UPDATE
-       SET username = EXCLUDED.username,
-           updated_at = NOW()
-     RETURNING *`,
-    [telegramId, username || "", sanitizeName(displayName)]
+    `
+    INSERT INTO users (telegram_id, username, display_name, avatar_json)
+    VALUES ($1, $2, $3, $4::jsonb)
+    ON CONFLICT (telegram_id) DO UPDATE SET
+      username = EXCLUDED.username,
+      updated_at = NOW()
+    RETURNING *;
+    `,
+    [telegramId, cleanUser, cleanName, JSON.stringify(DEFAULT_AVATAR)]
   );
-  return formatUserRow(res.rows[0]);
+  return mapUserRow(res.rows[0]);
 }
 
-function formatUserRow(r) {
-  return {
-    id: r.id,
-    telegramId: r.telegram_id,
-    username: r.username,
-    displayName: r.display_name,
-    avatar: sanitizeAvatar(r.avatar),
-    unlockedItems: Array.isArray(r.unlocked_items) ? r.unlocked_items : [],
-    coins: r.coins,
-    xp: r.xp,
-    gamesPlayed: r.games_played,
-    wins: r.wins,
-    tasksDone: r.tasks_done,
-    cepuEjected: r.cepu_ejected,
-    bestEscapeSec: r.best_escape_sec
-  };
-}
-
-/**
- * Simpan perubahan avatar, nama, atau pembelian item kosmetik dengan validasi koin server-side
- */
 async function updateUserCustomization(userId, { displayName, avatar, buyItemKey, price }) {
-  if (!pool) return null;
+  if (!pool) {
+    for (const u of memUsers.values()) {
+      if (u.id === userId) {
+        if (displayName) u.displayName = sanitizeName(displayName);
+        if (avatar) u.avatar = sanitizeAvatar(avatar);
+        if (buyItemKey && price > 0) {
+          if (u.coins < price) return { error: "INSUFFICIENT_COINS" };
+          if (!u.unlockedItems.includes(buyItemKey)) {
+            u.coins -= price;
+            u.unlockedItems.push(buyItemKey);
+          }
+        }
+        return { user: u };
+      }
+    }
+    return null;
+  }
+
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const curRes = await client.query("SELECT * FROM users WHERE id = $1 FOR UPDATE", [userId]);
-    if (!curRes.rows.length) {
+    const cur = await client.query("SELECT * FROM users WHERE id = $1 FOR UPDATE", [userId]);
+    if (!cur.rows.length) {
       await client.query("ROLLBACK");
       return null;
     }
-    const u = curRes.rows[0];
-    let coins = u.coins;
-    let unlocked = Array.isArray(u.unlocked_items) ? [...u.unlocked_items] : [];
 
-    if (buyItemKey && typeof price === "number" && price > 0 && !unlocked.includes(buyItemKey)) {
-      if (coins < price) {
-        await client.query("ROLLBACK");
-        return { error: "KOIN_KURANG", user: formatUserRow(u) };
+    const row = cur.rows[0];
+    let coins = row.coins;
+    const unlocked = Array.isArray(row.unlocked_items) ? [...row.unlocked_items] : [];
+
+    if (buyItemKey && Number.isFinite(price) && price > 0) {
+      if (!unlocked.includes(buyItemKey)) {
+        if (coins < price) {
+          await client.query("ROLLBACK");
+          return { error: "INSUFFICIENT_COINS" };
+        }
+        coins -= Math.floor(price);
+        unlocked.push(String(buyItemKey).slice(0, 32));
       }
-      coins -= price;
-      unlocked.push(buyItemKey);
     }
 
-    const cleanName = displayName ? sanitizeName(displayName) : u.display_name;
-    const cleanAv = avatar ? sanitizeAvatar(avatar) : u.avatar;
+    const nextName = displayName ? sanitizeName(displayName) : row.display_name;
+    const nextAvatar = avatar ? sanitizeAvatar(avatar) : sanitizeAvatar(row.avatar_json);
 
     const upd = await client.query(
-      `UPDATE users
-       SET display_name = $1, avatar = $2::jsonb, unlocked_items = $3::jsonb, coins = $4, updated_at = NOW()
-       WHERE id = $5 RETURNING *`,
-      [cleanName, JSON.stringify(cleanAv), JSON.stringify(unlocked), coins, userId]
+      `
+      UPDATE users
+      SET display_name = $1, avatar_json = $2::jsonb, coins = $3, unlocked_items = $4::jsonb, updated_at = NOW()
+      WHERE id = $5
+      RETURNING *;
+      `,
+      [nextName, JSON.stringify(nextAvatar), coins, JSON.stringify(unlocked), userId]
     );
     await client.query("COMMIT");
-    return { user: formatUserRow(upd.rows[0]) };
+    return { user: mapUserRow(upd.rows[0]) };
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;
@@ -182,57 +192,44 @@ async function updateUserCustomization(userId, { displayName, avatar, buyItemKey
   }
 }
 
-/**
- * Commit hasil pertandingan secara atomik (Anti-Duplicate Reward per match_id + user_id)
- */
-async function commitMatchReward(matchId, userId, { coins, xp, win, tasksDone, cepuEjected, escapeSec }) {
-  if (!pool) return false;
+async function commitMatchReward(matchId, userId, { coins, xp, win, tasksDone, escapeSec }) {
+  if (!pool) return;
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
     const ins = await client.query(
-      `INSERT INTO reward_transactions (match_id, user_id, coins_earned, xp_earned)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (match_id, user_id) DO NOTHING
-       RETURNING id`,
-      [matchId, userId, Math.max(0, coins), Math.max(0, xp)]
+      `
+      INSERT INTO match_rewards (match_id, user_id, coins_earned, xp_earned)
+      VALUES ($1, $2, $3, $4)
+      ON CONFLICT (match_id, user_id) DO NOTHING
+      RETURNING match_id;
+      `,
+      [matchId, userId, coins, xp]
     );
 
-    if (!ins.rows.length) {
-      await client.query("ROLLBACK");
-      return false; // Sudah pernah diklaim
+    if (ins.rowCount > 0) {
+      await client.query(
+        `
+        UPDATE users SET
+          coins = coins + $1,
+          xp = xp + $2,
+          games_played = games_played + 1,
+          wins = wins + $3,
+          tasks_done = tasks_done + $4,
+          best_escape_sec = CASE
+            WHEN $5 > 0 AND (best_escape_sec = 0 OR $5 < best_escape_sec) THEN $5
+            ELSE best_escape_sec
+          END,
+          updated_at = NOW()
+        WHERE id = $6;
+        `,
+        [coins, xp, win ? 1 : 0, tasksDone || 0, Math.round(escapeSec || 0), userId]
+      );
     }
-
-    await client.query(
-      `UPDATE users SET
-        coins = coins + $1,
-        xp = xp + $2,
-        games_played = games_played + 1,
-        wins = wins + $3,
-        tasks_done = tasks_done + $4,
-        cepu_ejected = cepu_ejected + $5,
-        best_escape_sec = CASE
-          WHEN $6 > 0 AND (best_escape_sec = 0 OR $6 < best_escape_sec) THEN $6
-          ELSE best_escape_sec
-        END,
-        updated_at = NOW()
-       WHERE id = $7`,
-      [
-        Math.max(0, coins),
-        Math.max(0, xp),
-        win ? 1 : 0,
-        Math.max(0, tasksDone || 0),
-        Math.max(0, cepuEjected || 0),
-        Math.max(0, Math.round(escapeSec || 0)),
-        userId
-      ]
-    );
-
     await client.query("COMMIT");
-    return true;
   } catch (err) {
     await client.query("ROLLBACK");
-    return false;
+    console.error("[DB Reward Error]", err.message);
   } finally {
     client.release();
   }
@@ -241,31 +238,86 @@ async function commitMatchReward(matchId, userId, { coins, xp, win, tasksDone, c
 async function getLeaderboard(limit = 10) {
   if (!pool) return [];
   const res = await pool.query(
-    `SELECT display_name, wins, xp, games_played
-     FROM users
-     WHERE games_played > 0
-     ORDER BY wins DESC, xp DESC
-     LIMIT $1`,
+    `SELECT display_name, wins, xp, tasks_done FROM users WHERE is_banned = FALSE ORDER BY wins DESC, xp DESC LIMIT $1`,
     [Math.min(25, limit)]
   );
   return res.rows;
 }
 
-// Rate limiter sederhana berbasis Redis / Memory
-async function checkRateLimit(key, maxHits, windowSec) {
-  if (redis) {
-    const count = await redis.incr(key);
-    if (count === 1) await redis.expire(key, windowSec);
-    return count <= maxHits;
+/* ---------- Fungsi Khusus Admin ---------- */
+
+async function getServerStats() {
+  if (!pool) {
+    let banned = 0;
+    memUsers.forEach((u) => { if (u.isBanned) banned++; });
+    return { totalUsers: memUsers.size, bannedUsers: banned };
   }
-  const now = Date.now();
-  const item = memCache.get(key);
-  if (!item || item.exp < now) {
-    memCache.set(key, { c: 1, exp: now + windowSec * 1000 });
+  const res = await pool.query(`
+    SELECT 
+      COUNT(*)::int AS total,
+      COUNT(*) FILTER (WHERE is_banned = TRUE)::int AS banned
+    FROM users
+  `);
+  return {
+    totalUsers: res.rows[0]?.total || 0,
+    bannedUsers: res.rows[0]?.banned || 0
+  };
+}
+
+async function adminGiveCoins(telegramId, amount) {
+  const tgId = String(telegramId);
+  if (!pool) {
+    const u = memUsers.get(tgId);
+    if (!u) return null;
+    u.coins = Math.max(0, u.coins + amount);
+    return { display_name: u.displayName, coins: u.coins };
+  }
+  const res = await pool.query(
+    `UPDATE users SET coins = GREATEST(0, coins + $2), updated_at = NOW() WHERE telegram_id = $1 RETURNING display_name, coins`,
+    [tgId, amount]
+  );
+  return res.rows[0] || null;
+}
+
+async function setUserBanned(telegramId, banned) {
+  const tgId = String(telegramId);
+  if (!pool) {
+    const u = memUsers.get(tgId);
+    if (!u) return false;
+    u.isBanned = Boolean(banned);
     return true;
   }
-  item.c++;
-  return item.c <= maxHits;
+  const res = await pool.query(
+    `UPDATE users SET is_banned = $2, updated_at = NOW() WHERE telegram_id = $1 RETURNING id`,
+    [tgId, Boolean(banned)]
+  );
+  return res.rowCount > 0;
+}
+
+async function getAllUserTelegramIds() {
+  if (!pool) {
+    return Array.from(memUsers.values())
+      .filter((u) => !u.isBanned)
+      .map((u) => u.telegramId);
+  }
+  const res = await pool.query(`SELECT telegram_id FROM users WHERE is_banned = FALSE ORDER BY updated_at DESC LIMIT 2000`);
+  return res.rows.map((r) => r.telegram_id);
+}
+
+async function checkRateLimit(key, maxCount, windowSec) {
+  if (redis) {
+    const count = await redis.incr(`rl:${key}`);
+    if (count === 1) await redis.expire(`rl:${key}`, windowSec);
+    return count <= maxCount;
+  }
+  const now = Date.now();
+  const item = memRateLimits.get(key);
+  if (!item || now > item.resetAt) {
+    memRateLimits.set(key, { count: 1, resetAt: now + windowSec * 1000 });
+    return true;
+  }
+  item.count++;
+  return item.count <= maxCount;
 }
 
 module.exports = {
@@ -274,7 +326,9 @@ module.exports = {
   updateUserCustomization,
   commitMatchReward,
   getLeaderboard,
-  checkRateLimit,
-  getPool: () => pool,
-  getRedis: () => redis
+  getServerStats,
+  adminGiveCoins,
+  setUserBanned,
+  getAllUserTelegramIds,
+  checkRateLimit
 };
