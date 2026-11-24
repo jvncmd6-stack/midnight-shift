@@ -1,6 +1,6 @@
 (function (W) {
   "use strict";
-  const { $, R, rnd, cl, CFG, T, MW, MH, sh } = W.MS_CFG;
+  const { $, R, CFG, T, MW, MH, sh } = W.MS_CFG;
   const { spr, prop } = W.MS_SPR;
 
   const ZN = [
@@ -63,7 +63,6 @@
         }
       }
     });
-    // Karpet koridor utama & tombol darurat tengah
     wr("#3b2f58", 2 * T, 21 * T, 60 * T, 2 * T);
     wr("#d9b43c", 2 * T, 21 * T, 60 * T, 1);
     wr("#d9b43c", 2 * T, 23 * T - 1, 60 * T, 1);
@@ -158,20 +157,60 @@
     });
   }
 
-  // Sky background untuk Splash & Avatar Creator
+  // Sky & Siluet Gedung Kota Malam untuk Splash & Avatar Creator
   const ST = [];
-  for (let i = 0; i < 60; i++) ST.push([R(), R() * 0.6, R()]);
+  for (let i = 0; i < 65; i++) ST.push([R(), R() * 0.65, R()]);
+
+  const SKYLINE = [
+    { x: 0.00, w: 0.14, h: 0.42 },
+    { x: 0.12, w: 0.16, h: 0.56 },
+    { x: 0.26, w: 0.13, h: 0.36 },
+    { x: 0.37, w: 0.18, h: 0.62 },
+    { x: 0.53, w: 0.15, h: 0.48 },
+    { x: 0.66, w: 0.17, h: 0.58 },
+    { x: 0.81, w: 0.19, h: 0.44 }
+  ];
 
   function drawSky(ctx, VW, VH, tclock) {
+    // Gradasi langit malam
     ctx.fillStyle = "#120d2e"; ctx.fillRect(0, 0, VW, VH);
     ctx.fillStyle = "#1d1445"; ctx.fillRect(0, VH * 0.35, VW, VH * 0.25);
     ctx.fillStyle = "#2a1b5a"; ctx.fillRect(0, VH * 0.6, VW, VH * 0.4);
+
+    // Bintang kelap-kelip
     ST.forEach((s) => {
       ctx.fillStyle = Math.sin(tclock * 3 + s[2] * 20) > 0 ? "#fff" : "#8c86b8";
       ctx.fillRect(Math.floor(s[0] * VW), Math.floor(s[1] * VH), 1, 1);
     });
-    blobOn(ctx, "#ffe9a8", VW - 38, 30, 11, 11);
-    blobOn(ctx, "#120d2e", VW - 32, 26, 10, 10);
+
+    // Bulan sabit
+    blobOn(ctx, "#ffe9a8", VW - 36, 28, 11, 11);
+    blobOn(ctx, "#120d2e", VW - 30, 24, 10, 10);
+
+    // Lapisan gedung kota belakang
+    SKYLINE.forEach((b, idx) => {
+      const bx = Math.floor(b.x * VW);
+      const bw = Math.ceil(b.w * VW);
+      const bh = Math.floor(b.h * VH * 0.72);
+      const by = VH - bh;
+      ctx.fillStyle = idx % 2 ? "#161036" : "#1c1542";
+      ctx.fillRect(bx, by, bw, bh);
+
+      // Jendela kantor bercahaya
+      for (let wy = by + 5; wy < VH - 8; wy += 6) {
+        for (let wx2 = bx + 3; wx2 < bx + bw - 4; wx2 += 5) {
+          const hash = (wx2 * 13 + wy * 7 + idx) % 11;
+          if (hash < 4) {
+            ctx.fillStyle = hash === 0 ? "#ffd23f" : "#6bb7ff";
+            ctx.fillRect(wx2, wy, 2, 3);
+          }
+        }
+      }
+    });
+
+    // Trotoar & jalan bawah
+    ctx.fillStyle = "#0b0716";
+    ctx.fillRect(0, VH - 6, VW, 6);
   }
 
   function drawAvatarLabel(ctx, a, px, py, dir, fr, name, color = "#fff", jy = 0) {
@@ -196,6 +235,6 @@
   }
 
   W.MS_WORLD = {
-    wc, lc, LW, LH, GL, blocked, drawSky, drawAvatarLabel, drawPropSprite, drawMinimap, cl
+    wc, lc, LW, LH, GL, blocked, drawSky, drawAvatarLabel, drawPropSprite, drawMinimap
   };
 })(window);
