@@ -5,9 +5,7 @@
   "description": "Midnight Shift - Multiplayer Prop Hunt & Social Deduction Telegram Mini App",
   "scripts": {
     "start:server": "node server/index.js",
-    "start:bot": "node bot/index.js",
-    "dev:server": "node --watch server/index.js",
-    "dev:bot": "node --watch bot/index.js"
+    "dev": "node --watch server/index.js",
   },
   "dependencies": {
     "@fastify/cors": "^10.0.1",
