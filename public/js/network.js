@@ -8,7 +8,7 @@
   let currentRoom = null;
   let matchSnapshot = null;
   let myRoleInfo = null;
-  const lobbyPeers = new Map(); // tgId -> peer state
+  const lobbyPeers = new Map();
 
   function getOrCreateGuestId() {
     let gid = localStorage.getItem("ms_guest_id");
@@ -19,52 +19,92 @@
     return gid;
   }
 
+  function showRetry(msg) {
+    const sp = $("sp2");
+    if (!sp) return;
+    sp.classList.remove("hide", "bl");
+    sp.style.color = "#ff5d6c";
+    sp.innerHTML = `${msg}<br><button class="pb g" id="bRetryAuth" style="margin-top:12px">COBA LAGI</button>`;
+    const btn = $("bRetryAuth");
+    if (btn) {
+      btn.onclick = () => {
+        sp.style.color = "#fff";
+        sp.classList.add("bl");
+        sp.textContent = "MENGHUBUNGKAN...";
+        authenticate().then((okAuth) => {
+          if (okAuth) {
+            $("ldw").classList.add("hide");
+            sp.classList.add("hide");
+            $("menu").classList.remove("hide");
+          }
+        });
+      };
+    }
+  }
+
   async function authenticate() {
-    const initData = tgw && tgw.initData ? tgw.initData : "";
-    const startParam = (tgw && tgw.initDataUnsafe && tgw.initDataUnsafe.start_param) ||
-      new URLSearchParams(location.search).get("startapp") || "";
+    try {
+      const initData = tgw && tgw.initData ? tgw.initData : "";
+      const startParam =
+        (tgw && tgw.initDataUnsafe && tgw.initDataUnsafe.start_param) ||
+        new URLSearchParams(location.search).get("startapp") ||
+        "";
 
-    const res = await fetch("/api/auth", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        initData,
-        guestId: getOrCreateGuestId(),
-        guestName: getUN()
-      })
-    });
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 8000);
 
-    if (!res.ok) {
-      $("sp2").textContent = "GAGAL LOGIN TELEGRAM";
+      const res = await fetch("/api/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: ctrl.signal,
+        body: JSON.stringify({
+          initData,
+          guestId: getOrCreateGuestId(),
+          guestName: getUN()
+        })
+      });
+      clearTimeout(timer);
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        showRetry(errData.message || `GAGAL LOGIN (${res.status})`);
+        return false;
+      }
+
+      const data = await res.json();
+      authToken = data.token;
+      myTgId = data.user.telegramId;
+      setUN(data.user.displayName);
+
+      PG.coins = data.user.coins || 0;
+      PG.xp = data.user.xp || 0;
+      PG.games = data.user.gamesPlayed || 0;
+      PG.wins = data.user.wins || 0;
+      PG.tasks = data.user.tasksDone || 0;
+      PG.cepu = data.user.cepuEjected || 0;
+      PG.best = data.user.bestEscapeSec || 0;
+      PG.unl = data.user.unlockedItems || [];
+      if (data.user.avatar) {
+        Object.assign(ME, data.user.avatar);
+        ME.sp = {};
+      }
+      saveCfg();
+
+      connectSocket(data.startParam || startParam);
+      return true;
+    } catch (err) {
+      showRetry(err.name === "AbortError" ? "SERVER LAMBAT / TIMEOUT" : "KONEKSI TERPUTUS");
       return false;
     }
-
-    const data = await res.json();
-    authToken = data.token;
-    myTgId = data.user.telegramId;
-    setUN(data.user.displayName);
-
-    // Sinkronkan progres & avatar dari database server
-    PG.coins = data.user.coins || 0;
-    PG.xp = data.user.xp || 0;
-    PG.games = data.user.gamesPlayed || 0;
-    PG.wins = data.user.wins || 0;
-    PG.tasks = data.user.tasksDone || 0;
-    PG.cepu = data.user.cepuEjected || 0;
-    PG.best = data.user.bestEscapeSec || 0;
-    PG.unl = data.user.unlockedItems || [];
-    if (data.user.avatar) {
-      Object.assign(ME, data.user.avatar);
-      ME.sp = {};
-    }
-    saveCfg();
-
-    connectSocket(data.startParam || startParam);
-    return true;
   }
 
   function connectSocket(autoStartParam) {
-    socket = io({ auth: { token: authToken } });
+    if (typeof W.io !== "function") {
+      showRetry("SOCKET.IO GAGAL DIMUAT");
+      return;
+    }
+
+    socket = W.io({ auth: { token: authToken }, transports: ["websocket", "polling"] });
 
     socket.on("connect", () => {
       $("who").textContent = `Online: ${getUN()}`;
@@ -73,6 +113,10 @@
         joinRoom(code);
         autoStartParam = "";
       }
+    });
+
+    socket.on("connect_error", (err) => {
+      $("who").textContent = `Offline (${err.message})`;
     });
 
     socket.on("room:update", (room) => {
