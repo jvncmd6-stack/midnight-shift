@@ -273,14 +273,18 @@
       });
     }
   });
+  
   socket.on("meeting:update", (m) => {
     if (W.MS_APP && W.MS_APP.onMeetingUpdate) {
-      const secs = m.endTime ? Math.max(0, Math.ceil((m.endTime - Date.now()) / 1000)) : 25;
       W.MS_APP.onMeetingUpdate({
         active: true,
-        timeLeft: secs,
+        endTime: m.endTime || (Date.now() + 25000),
         callerName: m.callerName || "Pemain",
-        candidates: m.eligible || []
+        candidates: m.eligible || [],
+        votedCount: m.votedCount || 0,
+        totalVoters: m.totalVoters || (m.eligible ? m.eligible.length : 0),
+        clues: m.clues || [],
+        myId: myTgId
       });
     }
   });
