@@ -4,7 +4,7 @@ const { PROPS, EMERGENCY_BUTTON } = require("../packages/shared/constants");
 const { PHASE } = require("../packages/shared/protocol");
 
 /**
- * Menangani aksi pemain (Disguise, Sprint, Attack, Task, Ability, Meeting & Voting)
+ * Menangani seluruh aksi pemain: Disguise, Sprint, Attack, Task, Skill 9 Peran, Meeting & Voting
  */
 function handlePlayerAction(engine, tgId, action, payload = {}) {
   const pl = engine.players.get(tgId);
@@ -33,7 +33,7 @@ function handlePlayerAction(engine, tgId, action, payload = {}) {
       pl.propType = null;
     } else {
       let nearest = "cone";
-      let bestDist = 3.5;
+      let bestDist = 3.6;
       engine.props.forEach((pr) => {
         if (!pr.broken) {
           const d = Math.hypot(pr.x - pl.x, pr.z - pl.z);
@@ -54,23 +54,23 @@ function handlePlayerAction(engine, tgId, action, payload = {}) {
   if (action === "SPRINT" && now >= pl.sprintCdUntil) {
     if (pl.disguised) pl.disguised = false;
     const isPenyusup = pl.role === "PENYUSUP";
-    pl.sprintUntil = now + (isPenyusup ? 4.5 : 3.0);
-    pl.sprintCdUntil = now + (isPenyusup ? 10 : 12);
+    pl.sprintUntil = now + (isPenyusup ? 4.8 : 3.0);
+    pl.sprintCdUntil = now + (isPenyusup ? 9 : 12);
     return;
   }
 
   // 4. Serangan Satpam
   if (action === "ATTACK" && pl.team === "GUARD" && now >= engine.grace && now >= pl.stunUntil) {
     if (now < pl.abilityCdUntil) return;
-    pl.abilityCdUntil = now + 1.2;
+    pl.abilityCdUntil = now + 1.1;
     performGuardAttack(engine, pl);
     return;
   }
 
-  // 5. Penyelesaian Tugas (Validasi jarak server-side)
+  // 5. Penyelesaian Tugas Terminal
   if (action === "COMPLETE_TASK" && pl.team !== "GUARD") {
     const term = engine.terminals.find((t) => t.id === Number(payload.termId) && !t.done);
-    if (!term || Math.hypot(term.x - pl.x, term.z - pl.z) > 2.8) return;
+    if (!term || Math.hypot(term.x - pl.x, term.z - pl.z) > 3.0) return;
     term.done = true;
     term.sabotaged = false;
     pl.tasksDone++;
@@ -82,9 +82,9 @@ function handlePlayerAction(engine, tgId, action, payload = {}) {
     if (engine.progress >= engine.quota && !engine.gatesOpen) {
       engine.gatesOpen = true;
       engine.phase = PHASE.FINAL_ESCAPE;
-      engine.limit = Math.min(engine.limit, engine.elapsed + 35);
+      engine.limit = Math.min(engine.limit, engine.elapsed + 38);
       engine.io.to(engine.room.code).emit("game:toast", {
-        text: "ALARM! PINTU DARURAT KANAN TERBUKA 35 DETIK!",
+        text: "🚨 ALARM! PINTU DARURAT KANAN TERBUKA 38 DETIK!",
         type: "g"
       });
     }
@@ -93,37 +93,7 @@ function handlePlayerAction(engine, tgId, action, payload = {}) {
 
   // 6. Skill Spesial Peran
   if (action === "ABILITY" && now >= engine.grace && now >= pl.abilityCdUntil) {
-    if (pl.role === "TEKNISI") {
-      pl.scanUntil = now + 6;
-      pl.abilityCdUntil = now + 25;
-    } else if (pl.role === "DOKTER") {
-      for (const other of engine.players.values()) {
-        if (other.id !== pl.id && other.alive && other.team === "CIVILIAN" && other.hp < 2) {
-          if (Math.hypot(other.x - pl.x, other.z - pl.z) < 2.5) {
-            other.hp = 2;
-            pl.abilityCdUntil = now + 25;
-            break;
-          }
-        }
-      }
-    } else if (pl.role === "CEPU" && engine.sabCount < 4) {
-      const doneTerm = engine.terminals.find((t) => t.done);
-      if (doneTerm) {
-        doneTerm.done = false;
-        doneTerm.sabotaged = true;
-        engine.progress = Math.max(0, engine.progress - 1);
-        engine.sabCount++;
-        pl.abilityCdUntil = now + 30;
-        engine.clues.push({ termName: doneTerm.name, suspect: pl.name });
-        engine.io.to(engine.room.code).emit("game:toast", {
-          text: `PERINGATAN! ${doneTerm.name.toUpperCase()} DISABOTASE! (${engine.sabCount}/4)`,
-          type: "b"
-        });
-        if (engine.sabCount >= 4) {
-          engine.finishMatch("GUARD", "Sabotase Cepu menghancurkan sistem gedung!");
-        }
-      }
-    }
+    handleRoleAbility(engine, pl, now);
     return;
   }
 
@@ -135,14 +105,75 @@ function handlePlayerAction(engine, tgId, action, payload = {}) {
     now >= engine.grace &&
     engine.meetingsUsed < 2 &&
     now - engine.lastMeetingAt > 45 &&
-    Math.hypot(EMERGENCY_BUTTON.x - pl.x, EMERGENCY_BUTTON.z - pl.z) < 2.6
+    Math.hypot(EMERGENCY_BUTTON.x - pl.x, EMERGENCY_BUTTON.z - pl.z) < 2.8
   ) {
     startMeeting(engine, pl);
   }
 }
 
+function handleRoleAbility(engine, pl, now) {
+  if (pl.role === "TEKNISI") {
+    pl.scanUntil = now + 6;
+    pl.abilityCdUntil = now + 24;
+  } else if (pl.role === "DETEKTIF") {
+    pl.investigateUntil = now + 7;
+    pl.abilityCdUntil = now + 22;
+    if (pl.socketId && engine.clues.length) {
+      const last = engine.clues[engine.clues.length - 1];
+      engine.io.to(pl.socketId).emit("game:toast", {
+        text: `🔍 BUKTI TERAKHIR: ${last.termName} (Suspect: ${last.suspect})`,
+        type: "i"
+      });
+    }
+  } else if (pl.role === "DOKTER") {
+    for (const other of engine.players.values()) {
+      if (other.id !== pl.id && other.alive && !other.escaped && other.team === "CIVILIAN" && other.hp < 2) {
+        if (Math.hypot(other.x - pl.x, other.z - pl.z) < 2.8) {
+          other.hp = 2;
+          pl.abilityCdUntil = now + 22;
+          if (other.socketId) {
+            engine.io.to(other.socketId).emit("game:toast", { text: "🩺 NYAWAMU DIPULIHKAN DOKTER!", type: "g" });
+          }
+          break;
+        }
+      }
+    }
+  } else if (pl.role === "CEPU" && engine.sabCount < 4) {
+    const doneTerm = engine.terminals.find((t) => t.done && Math.hypot(t.x - pl.x, t.z - pl.z) < 3.2);
+    if (!doneTerm) {
+      if (pl.socketId) {
+        engine.io.to(pl.socketId).emit("game:toast", { text: "DEKATI TERMINAL HIJAU UNTUK SABOTASE!", type: "i" });
+      }
+      return;
+    }
+    doneTerm.done = false;
+    doneTerm.sabotaged = true;
+    engine.progress = Math.max(0, engine.progress - 1);
+    engine.sabCount++;
+    pl.abilityCdUntil = now + 28;
+    engine.clues.push({ termName: doneTerm.name, suspect: pl.name });
+    engine.io.to(engine.room.code).emit("game:toast", {
+      text: `⚠️ ${doneTerm.name.toUpperCase()} DISABOTASE! (${engine.sabCount}/4)`,
+      type: "b"
+    });
+    if (engine.sabCount >= 4) {
+      engine.finishMatch("GUARD", "Sabotase Cepu melumpuhkan sistem gedung!");
+    }
+  } else if (pl.role === "PERETAS") {
+    engine.blackoutUntil = now + 6;
+    pl.abilityCdUntil = now + 30;
+    engine.io.to(engine.room.code).emit("game:toast", {
+      text: "⚡ SISTEM LISTRIK DIRETAAS! LAMPU PADAM 6 DETIK!",
+      type: "b"
+    });
+  } else if (pl.role === "BADUT") {
+    pl.abilityCdUntil = now + 15;
+    engine.clues.push({ termName: "Alarm Palsu", suspect: pl.name });
+  }
+}
+
 function performGuardAttack(engine, guard) {
-  const reach = 1.9;
+  const reach = 1.95;
   const gx = guard.x + Math.cos(guard.aim) * 1.1;
   const gz = guard.z + Math.sin(guard.aim) * 1.1;
 
@@ -158,10 +189,7 @@ function performGuardAttack(engine, guard) {
           type: "b"
         });
       } else if (target.socketId) {
-        engine.io.to(target.socketId).emit("game:toast", {
-          text: "KENA PUKUL! NYAWA TERSISA 1",
-          type: "b"
-        });
+        engine.io.to(target.socketId).emit("game:toast", { text: "KENA PUKUL! NYAWA TERSISA 1", type: "b" });
       }
       return;
     }
@@ -171,10 +199,7 @@ function performGuardAttack(engine, guard) {
     if (!pr.broken && Math.hypot(pr.x - gx, pr.z - gz) <= reach) {
       guard.stunUntil = engine.elapsed + 1.5;
       if (guard.socketId) {
-        engine.io.to(guard.socketId).emit("game:toast", {
-          text: "SALAH PUKUL BENDA ASLI! STUN 1.5D",
-          type: "b"
-        });
+        engine.io.to(guard.socketId).emit("game:toast", { text: "SALAH PUKUL BENDA ASLI! STUN 1.5D", type: "b" });
       }
       return;
     }
@@ -216,7 +241,8 @@ function startMeeting(engine, caller) {
   }, 3000);
 
   broadcastMeeting(engine);
-  setTimeout(() => {
+  if (engine.meetingTimer) clearTimeout(engine.meetingTimer);
+  engine.meetingTimer = setTimeout(() => {
     if (engine.phase === PHASE.MEETING) resolveMeeting(engine);
   }, 25000);
 }
@@ -234,23 +260,21 @@ function broadcastMeeting(engine) {
 }
 
 function resolveMeeting(engine) {
+  if (engine.meetingTimer) {
+    clearTimeout(engine.meetingTimer);
+    engine.meetingTimer = null;
+  }
   if (!engine.meeting) return;
+
   const tally = new Map();
-  engine.meeting.votes.forEach((targetId) => {
-    tally.set(targetId, (tally.get(targetId) || 0) + 1);
-  });
+  engine.meeting.votes.forEach((targetId) => tally.set(targetId, (tally.get(targetId) || 0) + 1));
 
   let topId = null;
   let topVotes = 0;
   let tie = false;
   tally.forEach((count, id) => {
-    if (count > topVotes) {
-      topVotes = count;
-      topId = id;
-      tie = false;
-    } else if (count === topVotes) {
-      tie = true;
-    }
+    if (count > topVotes) { topVotes = count; topId = id; tie = false; }
+    else if (count === topVotes) { tie = true; }
   });
 
   engine.meeting = null;
@@ -268,15 +292,15 @@ function resolveMeeting(engine) {
   if (ejected) {
     ejected.alive = false;
     const isBadut = ejected.role === "BADUT";
-    const isCepu = ejected.role === "CEPU";
+    const isTraitor = ejected.team === "TRAITOR";
     engine.io.to(engine.room.code).emit("meeting:result", {
       ejectedName: ejected.name,
       roleRevealed: ejected.role,
       message: isBadut
         ? `${ejected.name} adalah BADUT! Badut memenangkan permainan!`
-        : isCepu
-          ? `${ejected.name} adalah CEPU! Sabotase berhasil dihentikan!`
-          : `${ejected.name} ternyata BUKAN Cepu (${ejected.role})!`
+        : isTraitor
+          ? `${ejected.name} adalah ${ejected.role}! Ancaman berhasil diusir!`
+          : `${ejected.name} ternyata BUKAN pengkhianat (${ejected.role})!`
     });
 
     if (isBadut) {
