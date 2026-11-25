@@ -50,11 +50,13 @@ class GameEngine {
   start(fillWithBots) {
     const participants = [];
     this.room.members.forEach((m) => {
-      if (m.connected) {
+      if (m.connected !== false) {
+        const tgId = String(m.tgId || m.telegramId || m.id);
+        const dbUserId = m.userId || (m.user && m.user.id) || m.dbId || tgId;
         participants.push({
-          id: m.telegramId,
-          userId: m.userId,
-          name: m.name,
+          id: tgId,
+          userId: dbUserId,
+          name: m.name || "Pemain",
           avatar: m.avatar,
           isBot: false,
           socketId: m.socketId
@@ -122,6 +124,8 @@ class GameEngine {
         disguised: false,
         propType: null,
         anonPropId: `p_${crypto.randomBytes(3).toString("hex")}`,
+        emote: 0,
+        emoteUntil: 0,
         sprintUntil: 0,
         sprintCdUntil: 0,
         abilityCdUntil: 0,
@@ -183,7 +187,7 @@ class GameEngine {
   }
 
   setPlayerInput(tgId, input) {
-    const pl = this.players.get(tgId);
+    const pl = this.players.get(String(tgId));
     if (!pl || !pl.alive || pl.escaped) return;
     pl.ix = input.ix;
     pl.iy = input.iy;
@@ -191,7 +195,7 @@ class GameEngine {
   }
 
   handleAction(tgId, action, payload) {
-    handlePlayerAction(this, tgId, action, payload);
+    handlePlayerAction(this, String(tgId), action, payload);
   }
 
   tick(dt) {
@@ -378,6 +382,7 @@ class GameEngine {
             escaped: other.escaped,
             disguised: other.disguised,
             propType: other.propType,
+            em: other.emoteUntil > this.elapsed ? other.emote : 0,
             moving: Math.hypot(other.ix, other.iy) > 0.1
           });
         }
@@ -424,7 +429,7 @@ class GameEngine {
       const xp = (won ? 80 : 30) + pl.tasksDone * 12;
 
       summary.push({
-        id: pl.id,
+        id: String(pl.id),
         name: pl.name,
         role: pl.role,
         team: pl.team,
@@ -435,14 +440,19 @@ class GameEngine {
         xp
       });
 
-      if (!pl.isBot && pl.userId) {
-        await commitMatchReward(this.matchId, pl.userId, {
-          coins,
-          xp,
-          win: won,
-          tasksDone: pl.tasksDone,
-          escapeSec: pl.escaped ? this.elapsed : 0
-        });
+      if (!pl.isBot) {
+        const rewardTarget = pl.userId || pl.id;
+        try {
+          await commitMatchReward(this.matchId, rewardTarget, {
+            coins,
+            xp,
+            win: won,
+            tasksDone: pl.tasksDone,
+            escapeSec: pl.escaped ? this.elapsed : 0
+          });
+        } catch (err) {
+          console.error("[commitMatchReward error]", err.message);
+        }
       }
     }
 
@@ -456,7 +466,7 @@ class GameEngine {
   }
 
   onPlayerDisconnect(tgId, permanent) {
-    const pl = this.players.get(tgId);
+    const pl = this.players.get(String(tgId));
     if (!pl) return;
     pl.ix = pl.iy = 0;
     pl.disconnectedAt = Date.now();
@@ -464,7 +474,7 @@ class GameEngine {
   }
 
   onPlayerReconnect(tgId, socket) {
-    const pl = this.players.get(tgId);
+    const pl = this.players.get(String(tgId));
     if (!pl) return;
     pl.disconnectedAt = null;
     pl.socketId = socket ? socket.id : null;
