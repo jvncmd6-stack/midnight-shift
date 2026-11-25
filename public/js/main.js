@@ -1,15 +1,13 @@
 (function (W) {
   "use strict";
   const { $, rnd, cl, vib, tgw, getUN, CFG, ME, T, MW, MH, toast } = W.MS_CFG;
-  const { spr } = W.MS_SPR;
-  const { wc, lc, LW, LH, BULBS, lobbyBlocked, drawSky, drawAvatarLabel, drawPropSprite, stepStreetTraffic, renderStreetLayer, renderStreetLights } = W.MS_WORLD;
+  const { wc, lc, LW, LH, BULBS, lobbyBlocked, drawSky, stepStreetTraffic, renderStreetLayer, renderStreetLights } = W.MS_WORLD;
   const { openTaskModal } = W.MS_TASKS;
   const { audioOn, MU } = W.MS_AUDIO;
   const NET = W.MS_NET;
 
-  // Muat seluruh modul pro secara otomatis
+  // Muat modul tambahan secara otomatis
   [
-    "/js/avatarPro.js",
     "/js/emotePro.js",
     "/js/propArt.js",
     "/js/hudMeeting.js",
@@ -176,7 +174,7 @@
       drawSky(ctx, VW, VH, tclock);
       if (scene === "creator") {
         const pcv = $("pv").getContext("2d");
-        const sp = spr(ME, pdir, [0, 1, 0, 2][Math.floor(tclock * 4) % 4]);
+        const sp = W.MS_SPR.spr(ME, pdir, [0, 1, 0, 2][Math.floor(tclock * 4) % 4]);
         pcv.clearRect(0, 0, pcv.width, pcv.height);
         pcv.drawImage(sp, 0, 0);
       }
@@ -242,7 +240,7 @@
     ctx.drawImage(isGame ? wc : lc, -camX, -camY);
 
     const drawList = [];
-    const avatarDrawer = W.MS_EMOTE_PRO ? W.MS_EMOTE_PRO.drawAvatarLabelPro : drawAvatarLabel;
+    const avatarDrawer = (W.MS_EMOTE_PRO && W.MS_EMOTE_PRO.drawAvatarLabelPro) || W.MS_WORLD.drawAvatarLabel;
 
     if (!isGame) {
       renderStreetLayer(ctx, camX, camY, VW, VH, tclock, drawList);
@@ -254,7 +252,7 @@
       drawList.push({ y: LM.z, f: () => avatarDrawer(ctx, ME, LM.x * T - camX, LM.z * T - camY, LM.dir, fr, getUN(), "#ffd23f", LM.jy, LM.em) });
     } else if (snap) {
       const wf = (Math.floor(tclock * 8) % 2) + 1;
-      const propDrawer = W.MS_PROP_ART ? W.MS_PROP_ART.drawPropSpritePro : drawPropSprite;
+      const propDrawer = (W.MS_PROP_ART && W.MS_PROP_ART.drawPropSpritePro) || W.MS_WORLD.drawPropSprite;
       (snap.props || []).forEach((p) => drawList.push({ y: p.z, f: () => propDrawer(ctx, p.type, p.x * T - camX, p.z * T - camY) }));
       (snap.entities || []).forEach((e) => {
         if (e.dead || e.escaped) return;
