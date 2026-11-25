@@ -7,8 +7,16 @@
   const { audioOn, MU } = W.MS_AUDIO;
   const NET = W.MS_NET;
 
-  // Muat seluruh modul tambahan secara otomatis jika belum terpasang di index.html
-  ["/js/propArt.js", "/js/hudMeeting.js", "/js/lobbyUi.js", "/js/escapeFx.js", "/js/roleFx.js"].forEach((src) => {
+  // Muat seluruh modul pro secara otomatis
+  [
+    "/js/avatarPro.js",
+    "/js/emotePro.js",
+    "/js/propArt.js",
+    "/js/hudMeeting.js",
+    "/js/lobbyUi.js",
+    "/js/escapeFx.js",
+    "/js/roleFx.js"
+  ].forEach((src) => {
     if (!document.querySelector(`script[src="${src}"]`)) {
       const s = document.createElement("script");
       s.src = src;
@@ -86,7 +94,7 @@
     $("lCode").textContent = `ROOM #${room.code}`;
     $("lMode").textContent = `${room.mode} · ${room.phase}`;
     $("cnt").textContent = `${room.members.length}/20`;
-    const isHost = room.hostTgId === NET.getMyTgId();
+    const isHost = String(room.hostTgId) === String(NET.getMyTgId());
     $("hostBar").classList.toggle("hide", !isHost);
     $("bMode").textContent = `MODE: ${room.mode}`;
   }
@@ -168,13 +176,13 @@
       drawSky(ctx, VW, VH, tclock);
       if (scene === "creator") {
         const pcv = $("pv").getContext("2d");
-        pcv.clearRect(0, 0, 20, 30);
-        pcv.drawImage(spr(ME, pdir, [0, 1, 0, 2][Math.floor(tclock * 4) % 4]), 0, 0);
+        const sp = spr(ME, pdir, [0, 1, 0, 2][Math.floor(tclock * 4) % 4]);
+        pcv.clearRect(0, 0, pcv.width, pcv.height);
+        pcv.drawImage(sp, 0, 0);
       }
       return;
     }
 
-    // Kunci input gerak saat modal tugas / rapat terbuka agar karakter tidak menjauh dari terminal
     const modalOpen = !$("sheet").classList.contains("hide");
     const ix = modalOpen ? 0 : cl(jx + (keys.d ? 1 : 0) - (keys.a ? 1 : 0), -1, 1);
     const iy = modalOpen ? 0 : cl(jy + (keys.s ? 1 : 0) - (keys.w ? 1 : 0), -1, 1);
@@ -234,14 +242,16 @@
     ctx.drawImage(isGame ? wc : lc, -camX, -camY);
 
     const drawList = [];
+    const avatarDrawer = W.MS_EMOTE_PRO ? W.MS_EMOTE_PRO.drawAvatarLabelPro : drawAvatarLabel;
+
     if (!isGame) {
       renderStreetLayer(ctx, camX, camY, VW, VH, tclock, drawList);
       NET.lobbyPeers.forEach((p) => {
         p.x += (p.tx - p.x) * 0.25; p.z += (p.tz - p.z) * 0.25;
-        drawList.push({ y: p.z, f: () => drawAvatarLabel(ctx, p.avatar, p.x * T - camX, p.z * T - camY, p.dir, 0, p.name, "#fff", p.jy, p.em) });
+        drawList.push({ y: p.z, f: () => avatarDrawer(ctx, p.avatar, p.x * T - camX, p.z * T - camY, p.dir, 0, p.name, "#fff", p.jy, p.em) });
       });
       const fr = LM.mv ? [1, 0, 2, 0][Math.floor(LM.wd * 2.2) % 4] : 0;
-      drawList.push({ y: LM.z, f: () => drawAvatarLabel(ctx, ME, LM.x * T - camX, LM.z * T - camY, LM.dir, fr, getUN(), "#ffd23f", LM.jy, LM.em) });
+      drawList.push({ y: LM.z, f: () => avatarDrawer(ctx, ME, LM.x * T - camX, LM.z * T - camY, LM.dir, fr, getUN(), "#ffd23f", LM.jy, LM.em) });
     } else if (snap) {
       const wf = (Math.floor(tclock * 8) % 2) + 1;
       const propDrawer = W.MS_PROP_ART ? W.MS_PROP_ART.drawPropSpritePro : drawPropSprite;
@@ -253,7 +263,7 @@
           f: () => {
             const px = e.x * T - camX, py = e.z * T - camY;
             if ((e.disguised || e.isAnonProp) && e.propType) propDrawer(ctx, e.propType, px, py);
-            else drawAvatarLabel(ctx, e.avatar || ME, px, py, e.dir || 0, wf, e.name, e.team === "GUARD" ? "#ff5d6c" : "#fff", 0, e.em || 0);
+            else avatarDrawer(ctx, e.avatar || ME, px, py, e.dir || 0, wf, e.name, e.team === "GUARD" ? "#ff5d6c" : "#fff", 0, e.em || 0);
           }
         });
       });
