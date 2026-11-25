@@ -1,6 +1,6 @@
 (function (W) {
   "use strict";
-  const { tgw, getUN, setUN, PG, ME, saveCfg, toast } = W.MS_CFG;
+  const { tgw, getUN, setUN, PG, ME, saveCfg, toast, closeSheet } = W.MS_CFG;
 
   const socket = W.io({
     transports: ["polling", "websocket"],
@@ -237,7 +237,9 @@
       W.MS_APP.onMatchStarted({
         role: data.role,
         roleName: info.name || data.role,
-        team: info.team || "CIVILIAN"
+        team: info.team || "CIVILIAN",
+        quota: data.quota,
+        quotaTier: data.quotaTier || ""
       });
     }
   });
@@ -265,24 +267,30 @@
 
   socket.on("meeting:start", (m) => {
     if (W.MS_APP && W.MS_APP.onMeetingUpdate) {
+      const list = m.eligible || m.candidates || [];
       W.MS_APP.onMeetingUpdate({
         active: true,
-        timeLeft: m.duration || 25,
+        endTime: m.endTime || (Date.now() + (m.duration || 25) * 1000),
         callerName: m.callerName || "Pemain",
-        candidates: m.candidates || []
+        candidates: list,
+        votedCount: m.votedCount || 0,
+        totalVoters: m.totalVoters || list.length,
+        clues: m.clues || [],
+        myId: myTgId
       });
     }
   });
-  
-    socket.on("meeting:update", (m) => {
+
+  socket.on("meeting:update", (m) => {
     if (W.MS_APP && W.MS_APP.onMeetingUpdate) {
+      const list = m.eligible || m.candidates || [];
       W.MS_APP.onMeetingUpdate({
         active: true,
         endTime: m.endTime || (Date.now() + 25000),
         callerName: m.callerName || "Pemain",
-        candidates: m.eligible || [],
+        candidates: list,
         votedCount: m.votedCount || 0,
-        totalVoters: m.totalVoters || (m.eligible ? m.eligible.length : 0),
+        totalVoters: m.totalVoters || list.length,
         clues: m.clues || [],
         myId: myTgId
       });
@@ -290,13 +298,14 @@
   });
 
   socket.on("meeting:result", (r) => {
-    closeSheet();
+    if (closeSheet) closeSheet();
     if (r && r.message) toast(r.message, r.ejectedName ? "g" : "i");
   });
-  
+
   socket.on("match:result", (res) => {
     latestSnapshot = null;
-    const meResult = (res.players || []).find((p) => String(p.id) === myTgId) || { win: false, coins: 10, xp: 30 };
+    if (closeSheet) closeSheet();
+    const meResult = (res.players || []).find((p) => String(p.id) === myTgId) || { won: false, coins: 10, xp: 30 };
     if (W.MS_APP && W.MS_APP.onMatchResult) {
       W.MS_APP.onMatchResult({
         reason: res.reason,
