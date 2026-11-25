@@ -4,20 +4,27 @@ const { PROPS, EMERGENCY_BUTTON } = require("../packages/shared/constants");
 const { PHASE } = require("../packages/shared/protocol");
 
 /**
- * Menangani seluruh aksi pemain: Disguise, Sprint, Attack, Task, Skill 9 Peran, Meeting & Voting
+ * Menangani seluruh aksi pemain: Emote, Disguise, Sprint, Attack, Task, Skill 9 Peran, Meeting & Voting
  */
 function handlePlayerAction(engine, tgId, action, payload = {}) {
-  const pl = engine.players.get(tgId);
+  const pl = engine.players.get(String(tgId));
   if (!pl || !pl.alive || pl.escaped || engine.phase === PHASE.RESULT) return;
   const now = engine.elapsed;
+
+  // 0. Emot Animasi Pro Saat Bermain
+  if (action === "EMOTE") {
+    pl.emote = Number(payload.emote) || 1;
+    pl.emoteUntil = now + 2.5;
+    return;
+  }
 
   // 1. Voting saat Rapat Darurat
   if (engine.phase === PHASE.MEETING) {
     if (action === "VOTE" && engine.meeting && pl.team !== "GUARD") {
-      if (engine.meeting.votes.has(tgId)) return;
-      const targetId = payload.targetId || "SKIP";
-      if (targetId === tgId) return;
-      engine.meeting.votes.set(tgId, targetId);
+      if (engine.meeting.votes.has(pl.id)) return;
+      const targetId = String(payload.targetId || "SKIP");
+      if (targetId === pl.id) return;
+      engine.meeting.votes.set(pl.id, targetId);
       broadcastMeeting(engine);
       if (engine.meeting.votes.size >= engine.meeting.eligibleIds.length) {
         resolveMeeting(engine);
@@ -70,7 +77,7 @@ function handlePlayerAction(engine, tgId, action, payload = {}) {
   // 5. Penyelesaian Tugas Terminal
   if (action === "COMPLETE_TASK" && pl.team !== "GUARD") {
     const term = engine.terminals.find((t) => t.id === Number(payload.termId) && !t.done);
-    if (!term || Math.hypot(term.x - pl.x, term.z - pl.z) > 3.0) return;
+    if (!term || Math.hypot(term.x - pl.x, term.z - pl.z) > 3.2) return;
     term.done = true;
     term.sabotaged = false;
     pl.tasksDone++;
@@ -91,7 +98,7 @@ function handlePlayerAction(engine, tgId, action, payload = {}) {
     return;
   }
 
-  // 6. Skill Spesial Peran
+  // 6. Skill Spesial 9 Peran
   if (action === "ABILITY" && now >= engine.grace && now >= pl.abilityCdUntil) {
     handleRoleAbility(engine, pl, now);
     return;
@@ -168,6 +175,8 @@ function handleRoleAbility(engine, pl, now) {
     });
   } else if (pl.role === "BADUT") {
     pl.abilityCdUntil = now + 15;
+    pl.emote = 1;
+    pl.emoteUntil = now + 3.0;
     engine.clues.push({ termName: "Alarm Palsu", suspect: pl.name });
   }
 }
