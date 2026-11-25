@@ -8,6 +8,7 @@ const {
   TERMINALS,
   EXIT_GATES,
   ROLES,
+  getTaskQuota,
   getRoleDistribution,
   isBlocked,
   hasLineOfSight
@@ -34,10 +35,13 @@ class GameEngine {
     this.terminals = [];
     this.progress = 0;
     this.quota = 4;
+    this.quotaTier = "KECIL (4-6 PEMAIN)";
     this.gatesOpen = false;
     this.sabCount = 0;
+    this.blackoutUntil = 0;
     this.clues = [];
     this.meeting = null;
+    this.meetingTimer = null;
     this.meetingsUsed = 0;
     this.lastMeetingAt = -60;
     this.interval = null;
@@ -83,17 +87,20 @@ class GameEngine {
 
     const shuffled = participants.sort(() => Math.random() - 0.5);
     const dist = getRoleDistribution(shuffled.length, this.room.mode);
+    const taskCfg = getTaskQuota(shuffled.length, this.room.mode);
+    this.quota = taskCfg.quota;
+    this.quotaTier = taskCfg.tier;
+    this.limit = taskCfg.timeLimit;
+
     const rolePool = [];
     for (let i = 0; i < dist.guards; i++) rolePool.push("SATPAM");
-    for (let i = 0; i < dist.traitors; i++) rolePool.push("CEPU");
+    for (let i = 0; i < dist.traitors; i++) rolePool.push(i === 0 ? "CEPU" : "PERETAS");
     for (let i = 0; i < dist.neutrals; i++) rolePool.push("BADUT");
 
-    const civSpecials = ["TEKNISI", "PENYUSUP", "DOKTER"];
+    const civSpecials = ["TEKNISI", "DOKTER", "DETEKTIF", "PENYUSUP"];
     for (let i = 0; i < dist.civilians; i++) {
       rolePool.push(i < civSpecials.length && shuffled.length >= 5 ? civSpecials[i] : "WARGA");
     }
-
-    this.quota = Math.max(3, Math.min(6, dist.civilians + dist.traitors));
 
     shuffled.forEach((p, idx) => {
       const roleKey = rolePool[idx] || "WARGA";
@@ -119,11 +126,11 @@ class GameEngine {
         sprintCdUntil: 0,
         abilityCdUntil: 0,
         scanUntil: 0,
+        investigateUntil: 0,
         stunUntil: 0,
         tasksDone: 0,
         disconnectedAt: null,
-        botTimer: 1 + Math.random() * 2,
-        botTaskCd: 8 + Math.random() * 10
+        botTimer: 1 + Math.random() * 2
       });
     });
 
@@ -154,7 +161,8 @@ class GameEngine {
           matchId: this.matchId,
           role: pl.role,
           roleInfo: ROLES[pl.role],
-          quota: this.quota
+          quota: this.quota,
+          quotaTier: this.quotaTier
         });
       }
     });
@@ -167,6 +175,10 @@ class GameEngine {
     if (this.interval) {
       clearInterval(this.interval);
       this.interval = null;
+    }
+    if (this.meetingTimer) {
+      clearTimeout(this.meetingTimer);
+      this.meetingTimer = null;
     }
   }
 
@@ -197,29 +209,43 @@ class GameEngine {
 
     this.players.forEach((pl) => {
       if (!pl.alive || pl.escaped) {
-        if (pl.escaped && pl.team !== "GUARD") escapedCivilians++;
+        if (pl.escaped && pl.team === "CIVILIAN") escapedCivilians++;
         return;
       }
-      if (pl.team !== "GUARD") livingCivilians++;
+      if (pl.team === "CIVILIAN") livingCivilians++;
       if (pl.isBot) this.stepBotAI(pl, dt);
       if (pl.team === "GUARD" && this.elapsed < this.grace) return;
       if (this.elapsed < pl.stunUntil) return;
 
       const isSprinting = this.elapsed < pl.sprintUntil;
       const propMult = pl.disguised && pl.propType ? PROPS[pl.propType].speedMult : 1;
-      const speed = (pl.team === "GUARD" ? 4.3 : 4.0) * (isSprinting ? 1.6 : 1) * propMult * dt;
+      const speed = (pl.team === "GUARD" ? 4.35 : 4.0) * (isSprinting ? 1.62 : 1) * propMult * dt;
 
       if (Math.hypot(pl.ix, pl.iy) > 0.1) {
-        const nx = pl.x + pl.ix * speed;
-        const nz = pl.z + pl.iy * speed;
+        const moveAngle = Math.atan2(pl.iy, pl.ix);
+        let nx = pl.x + Math.cos(moveAngle) * speed;
+        let nz = pl.z + Math.sin(moveAngle) * speed;
+
+        if (pl.isBot && isBlocked(nx, nz)) {
+          for (const offset of [0.8, -0.8, 1.5, -1.5, 2.3, -2.3]) {
+            const tx = pl.x + Math.cos(moveAngle + offset) * speed;
+            const tz = pl.z + Math.sin(moveAngle + offset) * speed;
+            if (!isBlocked(tx, tz)) {
+              nx = tx;
+              nz = tz;
+              break;
+            }
+          }
+        }
+
         if (!isBlocked(nx, pl.z)) pl.x = nx;
         if (!isBlocked(pl.x, nz)) pl.z = nz;
         pl.dir = Math.abs(pl.ix) > Math.abs(pl.iy) ? (pl.ix > 0 ? 2 : 3) : pl.iy > 0 ? 0 : 1;
       }
 
-      if (this.gatesOpen && pl.team !== "GUARD" && !pl.disguised) {
+      if (this.gatesOpen && pl.team === "CIVILIAN" && !pl.disguised) {
         for (const gate of EXIT_GATES) {
-          if (Math.hypot(gate.x - pl.x, gate.z - pl.z) < 1.9) {
+          if (Math.hypot(gate.x - pl.x, gate.z - pl.z) < 1.95) {
             pl.escaped = true;
             escapedCivilians++;
             livingCivilians = Math.max(0, livingCivilians - 1);
@@ -249,8 +275,7 @@ class GameEngine {
   }
 
   stepBotAI(bot, dt) {
-    // Saat pintu darurat terbuka, bot non-satpam berlari menuju pintu keluar
-    if (this.gatesOpen && bot.team !== "GUARD") {
+    if (this.gatesOpen && bot.team === "CIVILIAN") {
       if (bot.disguised) bot.disguised = false;
       const gate = EXIT_GATES[0] || { x: 62.5, z: 22 };
       const ang = Math.atan2(gate.z - bot.z, gate.x - bot.x);
@@ -262,22 +287,21 @@ class GameEngine {
 
     bot.botTimer -= dt;
     if (bot.botTimer <= 0) {
-      bot.botTimer = 1.6 + Math.random() * 2.4;
-
-      if (bot.team !== "GUARD" && this.elapsed > 5) {
+      bot.botTimer = 1.6 + Math.random() * 2.2;
+      if (bot.team === "CIVILIAN" && this.elapsed > 5) {
         const openTerm = this.terminals.find((t) => !t.done);
-        if (openTerm && Math.random() < 0.55) {
+        if (openTerm && Math.random() < 0.58) {
           bot.disguised = false;
           const ang = Math.atan2(openTerm.z - bot.z, openTerm.x - bot.x);
           bot.ix = Math.cos(ang);
           bot.iy = Math.sin(ang);
           bot.aim = ang;
-          if (Math.hypot(openTerm.x - bot.x, openTerm.z - bot.z) < 2.4) {
+          if (Math.hypot(openTerm.x - bot.x, openTerm.z - bot.z) < 2.6) {
             this.handleAction(bot.id, "COMPLETE_TASK", { termId: openTerm.id });
           }
           return;
         }
-        if (!bot.disguised && Math.random() < 0.5) {
+        if (!bot.disguised && Math.random() < 0.45) {
           this.handleAction(bot.id, "DISGUISE");
           bot.ix = bot.iy = 0;
           return;
@@ -296,6 +320,7 @@ class GameEngine {
   }
 
   broadcastFilteredSnapshots() {
+    const isBlackout = this.elapsed < this.blackoutUntil;
     const baseState = {
       matchId: this.matchId,
       tick: this.tickCount,
@@ -304,7 +329,9 @@ class GameEngine {
       graceLeft: Math.max(0, Math.ceil(this.grace - this.elapsed)),
       progress: this.progress,
       quota: this.quota,
+      quotaTier: this.quotaTier,
       gatesOpen: this.gatesOpen,
+      blackout: isBlackout,
       sabCount: this.sabCount,
       terminals: this.terminals
     };
@@ -313,15 +340,17 @@ class GameEngine {
       if (viewer.isBot || !viewer.socketId) return;
       const visibleEntities = [];
       const isSpectator = !viewer.alive || viewer.escaped;
-      const viewRange = viewer.team === "GUARD" ? 13 : 16;
+      const baseRange = viewer.team === "GUARD" ? 13 : 16;
+      const viewRange = isBlackout && viewer.team === "CIVILIAN" ? 6.5 : baseRange;
 
       this.players.forEach((other) => {
         if (!other.alive || other.escaped) return;
         const isSelf = other.id === viewer.id;
         const dist = Math.hypot(other.x - viewer.x, other.z - viewer.z);
         const canScan = viewer.scanUntil > this.elapsed && other.team === "GUARD";
+        const canInvestigate = viewer.investigateUntil > this.elapsed && (other.team === "TRAITOR" || other.role === "BADUT");
 
-        if (!isSpectator && !isSelf && !canScan && (dist > viewRange || !hasLineOfSight(viewer.x, viewer.z, other.x, other.z))) {
+        if (!isSpectator && !isSelf && !canScan && !canInvestigate && (dist > viewRange || !hasLineOfSight(viewer.x, viewer.z, other.x, other.z))) {
           return;
         }
 
@@ -367,6 +396,7 @@ class GameEngine {
           escaped: viewer.escaped,
           disguised: viewer.disguised,
           scanActive: viewer.scanUntil > this.elapsed,
+          investigateActive: viewer.investigateUntil > this.elapsed,
           sprinting: viewer.sprintUntil > this.elapsed,
           stunned: viewer.stunUntil > this.elapsed,
           sprintCd: Math.max(0, Math.ceil(viewer.sprintCdUntil - this.elapsed)),
@@ -443,7 +473,8 @@ class GameEngine {
         matchId: this.matchId,
         role: pl.role,
         roleInfo: ROLES[pl.role],
-        quota: this.quota
+        quota: this.quota,
+        quotaTier: this.quotaTier
       });
     }
   }
