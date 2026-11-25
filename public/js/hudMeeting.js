@@ -1,7 +1,6 @@
 (function (W) {
   "use strict";
-  const { $, PG, saveCfg, toast, openSheet, closeSheet } = W.MS_CFG;
-  const { vib } = W.MS_CFG;
+  const { $, PG, saveCfg, toast, openSheet, closeSheet, vib } = W.MS_CFG;
   const { drawMinimap } = W.MS_WORLD;
   const { MU } = W.MS_AUDIO;
 
@@ -10,10 +9,22 @@
 
   function onMatchStarted(NET, showScene, info) {
     closeSheet();
+    if (W.MS_ESCAPE_FX) W.MS_ESCAPE_FX.resetEscapeState();
     showScene("hud");
-    $("role").textContent = info.roleName.toUpperCase();
+
+    const roleUpper = info.roleName.toUpperCase();
+    $("role").textContent = `${roleUpper} ⓘ`;
+    $("role").style.cursor = "pointer";
+    $("role").onclick = () => {
+      if (W.MS_ROLE_FX) W.MS_ROLE_FX.showRoleCard(roleUpper);
+    };
+
     $("bDis").classList.toggle("hide", info.team === "GUARD");
-    toast(`PERAN KAMU: ${info.roleName.toUpperCase()}`, info.team === "GUARD" ? "b" : "g");
+    if (W.MS_ROLE_FX) {
+      W.MS_ROLE_FX.showRoleCard(roleUpper);
+    } else {
+      toast(`PERAN KAMU: ${roleUpper}`, info.team === "GUARD" ? "b" : "g");
+    }
     vib(25);
   }
 
@@ -28,9 +39,9 @@
       const picked = String(myVote) === String(c.id);
       return (
         `<div class="vr" data-vid="${c.id}" style="justify-content:space-between;border:2px solid ${picked ? "#22c55e" : "#334155"};` +
-        `background:${picked ? "#14532d" : "#1e1b4b"};color:${picked ? "#facc15" : "#fff"}">` +
+        `background:${picked ? "#14532d" : "#1e1b4b"};color:${picked ? "#facc15" : "#fff"};margin-bottom:5px">` +
         `<span>${picked ? "✓ " : "👤 "}${c.name}</span>` +
-        `<span style="font-size:8px;padding:2px 5px;background:${picked ? "#22c55e" : "#0f172a"};color:${picked ? "#050914" : "#94a3b8"}">${picked ? "TERPILIH" : "VOTE"}</span>` +
+        `<span style="font-size:8px;padding:2px 6px;background:${picked ? "#22c55e" : "#0f172a"};color:${picked ? "#050914" : "#94a3b8"}">${picked ? "TERPILIH" : "VOTE"}</span>` +
         `</div>`
       );
     }).join("");
@@ -41,7 +52,7 @@
         `🔍 JEJAK SABOTASE: ${m.clues.map((cl) => `${cl.termName} (Suspect: ${cl.suspect})`).join(" · ")}</div>`
       : "";
 
-    const quickAccuse = ["Aku di terminal!", "Siapa yang dekat panel?", "Tadi ada yang nyamar!", "Skip dulu aja"]
+    const quickAccuse = ["Aku di terminal!", "Siapa dekat panel?", "Ada yang nyamar!", "Skip dulu aja"]
       .map((q) => `<button class="chip" data-qa="${q}" style="font-size:7.5px;padding:4px 6px">${q}</button>`)
       .join("");
 
@@ -51,7 +62,7 @@
       `<h2 style="color:#facc15;margin-bottom:4px">🚨 RAPAT DARURAT (<span id="mSec">${secsLeft}</span>D)</h2>` +
       `<p style="font-size:8.5px;margin-bottom:6px;color:#cbd5e1">${m.callerName} memanggil rapat · Suara: <b style="color:#22c55e">${m.votedCount}/${m.totalVoters}</b></p>` +
       clueHtml +
-      `<div id="vl" style="max-height:165px;overflow-y:auto;margin-bottom:6px">${rows}</div>` +
+      `<div id="vl" style="max-height:160px;overflow-y:auto;margin-bottom:6px">${rows}</div>` +
       `<div style="display:flex;flex-wrap:wrap;gap:4px;justify-content:center;margin-bottom:8px">${quickAccuse}</div>` +
       `<button class="pb ${skipPicked ? "g" : "d"}" id="vSkip">${skipPicked ? "✓ LEWATI VOTE DIPILIH" : "LEWATI VOTE"}</button>` +
       `</div>`
@@ -94,6 +105,7 @@
 
   function onMatchResult(showScene, res) {
     if (meetTimer) clearInterval(meetTimer);
+    if (W.MS_ESCAPE_FX) W.MS_ESCAPE_FX.ensureControls(false);
     PG.coins += res.yourReward.coins;
     PG.xp += res.yourReward.xp;
     saveCfg();
@@ -110,66 +122,71 @@
   function updateHud(snap) {
     const m = Math.max(0, Math.ceil(snap.timeLeft));
     const ents = snap.entities || [];
-    const aliveCivs = ents.filter((e) => !e.dead && e.team !== "GUARD").length;
+    const aliveCivs = ents.filter((e) => !e.dead && !e.escaped && e.team !== "GUARD").length;
     const totalCivs = ents.filter((e) => e.team !== "GUARD").length;
     const me = snap.you;
 
-    // Timer + Sisa Orang Hidup + Nyawa
-    const hpHearts = me.team === "GUARD" ? "🛡️" : me.dead ? "👻" : "❤️".repeat(Math.max(1, me.hp || 1));
+    // Timer + Sisa Penyintas + Indikator HP / Status Kabur
+    const hpHearts = me.team === "GUARD" ? "🛡️" : me.escaped ? "🏃" : me.dead ? "👻" : "❤️".repeat(Math.max(1, me.hp || 1));
     $("tm").textContent = `${Math.floor(m / 60)}:${("0" + (m % 60)).slice(-2)} · 👥${aliveCivs}/${totalCivs} ${hpHearts}`;
 
-    $("tl").textContent = snap.gatesOpen
-      ? `🚨 KE EXIT KANAN! (${snap.prog}/${snap.need})`
-      : `TUGAS ${snap.prog}/${snap.need}`;
+    // Status 1 baris rapi agar tidak turun menabrak minimap
+    $("tl").textContent = snap.gatesOpen ? "🚨 EXIT KANAN!" : `TUGAS ${snap.prog}/${snap.need}`;
     $("tb").style.width = `${Math.min(100, (snap.prog / snap.need) * 100)}%`;
+
+    // Sembunyikan tombol kontrol jika sudah berhasil kabur / mati
+    const locked = Boolean(me.escaped || me.dead);
+    $("bDis").classList.toggle("hide", me.team === "GUARD" || locked);
+    $("bSpr").classList.toggle("hide", locked);
+    $("bAct").classList.toggle("hide", locked);
 
     $("bDis").textContent = me.disguised ? "BUKA" : "NYAMAR";
     $("bSpr").classList.toggle("off", me.sprintCd > 0);
     $("bSpr").textContent = me.sprintCd > 0 ? `${Math.ceil(me.sprintCd)}S` : "LARI";
 
-    if (me.team !== "GUARD") {
+    if (me.team !== "GUARD" && !locked) {
       const guards = ents.filter((e) => e.team === "GUARD" && !e.dead);
       const minDist = guards.length ? Math.min(...guards.map((g) => Math.hypot(g.x - me.x, g.z - me.z))) : 99;
       const desiredMode = minDist < 9 ? "chase" : "hud";
-      if (MU.mode !== desiredMode) {
-        MU.mode = desiredMode;
-        MU.force = 1;
-      }
+      if (MU.mode !== desiredMode) { MU.mode = desiredMode; MU.force = 1; }
     }
 
-    if (me.team === "GUARD") {
-      $("bAct").textContent = "PUKUL";
-      $("bAct").classList.toggle("off", me.stun > 0);
-    } else {
-      const nearTerm = (snap.terminals || []).find((t) => !t.done && Math.hypot(t.x - me.x, t.z - me.z) < 2.6);
-      const nearBtn = Math.hypot(32 - me.x, 22 - me.z) < 2.5;
-      $("bAct").textContent = nearTerm ? "TUGAS" : nearBtn ? "RAPAT" : me.role === "CEPU" ? "SABOTASE" : "SKILL";
-      $("bAct").classList.toggle("off", !nearTerm && !nearBtn && me.abCd > 0);
-    }
+    const nearTerm = (snap.terminals || []).find((t) => !t.done && Math.hypot(t.x - me.x, t.z - me.z) < 2.6);
+    const nearBtn = Math.hypot(32 - me.x, 22 - me.z) < 2.5;
+    const baseLabel = W.MS_ROLE_FX
+      ? W.MS_ROLE_FX.getActionButtonLabel(me, snap, nearTerm, nearBtn)
+      : me.team === "GUARD" ? "PUKUL" : nearTerm ? "TUGAS" : nearBtn ? "RAPAT" : "SKILL";
+
+    const onCd = me.team === "GUARD" ? me.stun > 0 : (!nearTerm && !nearBtn && me.abCd > 0);
+    $("bAct").textContent = (!nearTerm && !nearBtn && me.abCd > 0) ? `${Math.ceil(me.abCd)}S` : baseLabel;
+    $("bAct").classList.toggle("off", onCd);
+
     drawMinimap(snap);
   }
 
   function drawExitCompass(ctx, VW, VH, snap, tclock) {
-    if (!snap || !snap.gatesOpen || !snap.you || snap.you.team === "GUARD") return;
-    // Gambar panah piksel penunjuk arah ke Pintu Darurat (x: 62.5, z: 22)
+    if (!snap || !snap.gatesOpen || !snap.you || snap.you.team === "GUARD" || snap.you.escaped || snap.you.dead) return;
     const dx = 62.5 - snap.you.x;
     const dz = 22 - snap.you.z;
     const ang = Math.atan2(dz, dx);
-    const cx = Math.round(VW / 2 + Math.cos(ang) * 34);
-    const cy = Math.round(VH / 2 + Math.sin(ang) * 26);
+    const cx = Math.round(VW / 2 + Math.cos(ang) * 38);
+    const cy = Math.round(VH / 2 + Math.sin(ang) * 28);
     const pulse = Math.sin(tclock * 10) > 0;
 
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(ang);
+    // Panah piksel mengarah ke Pintu Darurat Kanan
     ctx.fillStyle = pulse ? "#22c55e" : "#facc15";
-    ctx.fillRect(cx - 4, cy - 4, 8, 8);
-    ctx.fillStyle = "#050914";
-    ctx.fillRect(cx - 2, cy - 2, 4, 4);
+    ctx.fillRect(-6, -3, 8, 6);
+    ctx.fillRect(2, -5, 3, 10);
+    ctx.fillRect(5, -2, 3, 4);
+    ctx.restore();
+
+    ctx.font = "bold 6px monospace";
+    ctx.fillStyle = pulse ? "#bbf7d0" : "#fef08a";
+    ctx.fillText("EXIT", cx - 8, cy - 8);
   }
 
-  W.MS_HUD = {
-    onMatchStarted,
-    onMeetingUpdate,
-    onMatchResult,
-    updateHud,
-    drawExitCompass
-  };
+  W.MS_HUD = { onMatchStarted, onMeetingUpdate, onMatchResult, updateHud, drawExitCompass };
 })(window);
