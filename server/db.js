@@ -94,11 +94,11 @@ async function upsertUser({ telegramId, username = "", displayName = "Pemain" })
   const defaultAvJson = JSON.stringify(BASE_AVATAR);
 
   if (!pool) {
-    let u = memUsers.get(telegramId);
+    let u = memUsers.get(String(telegramId));
     if (!u) {
       u = {
         id: memUsers.size + 1,
-        telegramId,
+        telegramId: String(telegramId),
         username: cleanUser,
         displayName: cleanName,
         avatar: { ...BASE_AVATAR },
@@ -112,7 +112,7 @@ async function upsertUser({ telegramId, username = "", displayName = "Pemain" })
         unlockedItems: [],
         isBanned: false
       };
-      memUsers.set(telegramId, u);
+      memUsers.set(String(telegramId), u);
     }
     return u;
   }
@@ -126,7 +126,7 @@ async function upsertUser({ telegramId, username = "", displayName = "Pemain" })
       updated_at = NOW()
     RETURNING *;
     `,
-    [telegramId, cleanUser, cleanName, defaultAvJson]
+    [String(telegramId), cleanUser, cleanName, defaultAvJson]
   );
   return mapUserRow(res.rows[0]);
 }
@@ -134,7 +134,7 @@ async function upsertUser({ telegramId, username = "", displayName = "Pemain" })
 async function updateUserCustomization(userId, { displayName, avatar, buyItemKey, price }) {
   if (!pool) {
     for (const u of memUsers.values()) {
-      if (u.id === userId) {
+      if (u.id === userId || String(u.telegramId) === String(userId)) {
         if (displayName) u.displayName = sanitizeName(displayName);
         if (avatar) u.avatar = sanitizeAvatar(avatar);
         if (buyItemKey && price > 0) {
@@ -196,11 +196,40 @@ async function updateUserCustomization(userId, { displayName, avatar, buyItemKey
   }
 }
 
-async function commitMatchReward(matchId, userId, { coins, xp, win, tasksDone, escapeSec }) {
-  if (!pool) return;
+async function commitMatchReward(matchId, userIdentifier, { coins, xp, win, tasksDone, escapeSec }) {
+  const idStr = String(userIdentifier || "");
+  if (!idStr) return null;
+
+  // Fallback jika berjalan tanpa PostgreSQL
+  if (!pool) {
+    for (const u of memUsers.values()) {
+      if (String(u.telegramId) === idStr || String(u.id) === idStr) {
+        u.coins += coins;
+        u.xp += xp;
+        u.gamesPlayed += 1;
+        if (win) u.wins += 1;
+        u.tasksDone += tasksDone || 0;
+        return u;
+      }
+    }
+    return null;
+  }
+
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+
+    // Cari users.id (INTEGER) baik dari telegram_id maupun id internal
+    const userRes = await client.query(
+      `SELECT id FROM users WHERE telegram_id = $1 OR id::text = $1 LIMIT 1`,
+      [idStr]
+    );
+    if (!userRes.rows.length) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+    const dbUserId = userRes.rows[0].id;
+
     const ins = await client.query(
       `
       INSERT INTO match_rewards (match_id, user_id, coins_earned, xp_earned)
@@ -208,11 +237,12 @@ async function commitMatchReward(matchId, userId, { coins, xp, win, tasksDone, e
       ON CONFLICT (match_id, user_id) DO NOTHING
       RETURNING match_id;
       `,
-      [matchId, userId, coins, xp]
+      [matchId, dbUserId, coins, xp]
     );
 
+    let updatedUser = null;
     if (ins.rowCount > 0) {
-      await client.query(
+      const upd = await client.query(
         `
         UPDATE users SET
           coins = coins + $1,
@@ -225,15 +255,20 @@ async function commitMatchReward(matchId, userId, { coins, xp, win, tasksDone, e
             ELSE best_escape_sec
           END,
           updated_at = NOW()
-        WHERE id = $6;
+        WHERE id = $6
+        RETURNING *;
         `,
-        [coins, xp, win ? 1 : 0, tasksDone || 0, Math.round(escapeSec || 0), userId]
+        [coins, xp, win ? 1 : 0, tasksDone || 0, Math.round(escapeSec || 0), dbUserId]
       );
+      if (upd.rows.length) updatedUser = mapUserRow(upd.rows[0]);
     }
+
     await client.query("COMMIT");
+    return updatedUser;
   } catch (err) {
     await client.query("ROLLBACK");
     console.error("[DB Reward Error]", err.message);
+    return null;
   } finally {
     client.release();
   }
