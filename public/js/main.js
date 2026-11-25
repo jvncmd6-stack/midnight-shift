@@ -7,8 +7,8 @@
   const { audioOn, MU } = W.MS_AUDIO;
   const NET = W.MS_NET;
 
-  // Muat semua sub-modul secara otomatis jika belum dipasang di index.html
-  ["/js/hudMeeting.js", "/js/lobbyUi.js", "/js/escapeFx.js", "/js/roleFx.js"].forEach((src) => {
+  // Muat seluruh modul tambahan secara otomatis jika belum terpasang di index.html
+  ["/js/propArt.js", "/js/hudMeeting.js", "/js/lobbyUi.js", "/js/escapeFx.js", "/js/roleFx.js"].forEach((src) => {
     if (!document.querySelector(`script[src="${src}"]`)) {
       const s = document.createElement("script");
       s.src = src;
@@ -114,12 +114,13 @@
     }
     if (Math.hypot(32 - me.x, 22 - me.z) < 2.5) return NET.sendPlayerAction("CALL_MEETING");
 
-    // Feedback lokal instan untuk skill peran sebelum respons server
     const roleUpper = String(me.role || "").toUpperCase();
     if (roleUpper === "TEKNISI") toast("📡 RADAR X-RAY AKTIF 6 DETIK!", "i");
+    else if (roleUpper === "DETEKTIF") toast("🕵️ ANALISIS FORENSIK AKTIF 7 DETIK!", "i");
     else if (roleUpper === "DOKTER") toast("🩺 MEMERIKSA LUKA TEMAN DI DEKATMU...", "g");
-    else if (roleUpper === "CEPU") toast("🐍 MENYABOTASE TERMINAL SELESAI...", "b");
-    else if (roleUpper === "BADUT") toast("🤡 BERAKTING MENCURIGAKAN!", "i");
+    else if (roleUpper === "CEPU") toast("🐍 MENYABOTASE TERMINAL HIJAU...", "b");
+    else if (roleUpper === "PERETAS") toast("💻 MERETAS LISTRIK GEDUNG...", "b");
+    else if (roleUpper === "BADUT") toast("🤡 MEMANCING KECURIGAAN!", "i");
 
     NET.sendPlayerAction("ABILITY");
   };
@@ -173,8 +174,10 @@
       return;
     }
 
-    const ix = cl(jx + (keys.d ? 1 : 0) - (keys.a ? 1 : 0), -1, 1);
-    const iy = cl(jy + (keys.s ? 1 : 0) - (keys.w ? 1 : 0), -1, 1);
+    // Kunci input gerak saat modal tugas / rapat terbuka agar karakter tidak menjauh dari terminal
+    const modalOpen = !$("sheet").classList.contains("hide");
+    const ix = modalOpen ? 0 : cl(jx + (keys.d ? 1 : 0) - (keys.a ? 1 : 0), -1, 1);
+    const iy = modalOpen ? 0 : cl(jy + (keys.s ? 1 : 0) - (keys.w ? 1 : 0), -1, 1);
 
     if (scene === "lobby") {
       stepStreetTraffic(dt);
@@ -201,13 +204,11 @@
       if (snap && snap.you) {
         if (W.MS_HUD) W.MS_HUD.updateHud(snap);
 
-        // Tampilkan Cutscene Animasi Kabur dari Gedung jika pemain sudah selamat
         if (snap.you.escaped && W.MS_ESCAPE_FX && !W.MS_ESCAPE_FX.isSpectating()) {
           W.MS_ESCAPE_FX.renderEscapeScene(ctx, VW, VH, snap, tclock);
           return;
         }
 
-        // Kamera mengikuti pemain pilihan saat mode Spectate / tertangkap
         let focusX = snap.you.x;
         let focusZ = snap.you.z;
         if (snap.you.escaped || snap.you.dead) {
@@ -243,14 +244,15 @@
       drawList.push({ y: LM.z, f: () => drawAvatarLabel(ctx, ME, LM.x * T - camX, LM.z * T - camY, LM.dir, fr, getUN(), "#ffd23f", LM.jy, LM.em) });
     } else if (snap) {
       const wf = (Math.floor(tclock * 8) % 2) + 1;
-      (snap.props || []).forEach((p) => drawList.push({ y: p.z, f: () => drawPropSprite(ctx, p.type, p.x * T - camX, p.z * T - camY) }));
+      const propDrawer = W.MS_PROP_ART ? W.MS_PROP_ART.drawPropSpritePro : drawPropSprite;
+      (snap.props || []).forEach((p) => drawList.push({ y: p.z, f: () => propDrawer(ctx, p.type, p.x * T - camX, p.z * T - camY) }));
       (snap.entities || []).forEach((e) => {
         if (e.dead || e.escaped) return;
         drawList.push({
           y: e.z,
           f: () => {
             const px = e.x * T - camX, py = e.z * T - camY;
-            if (e.disguised && e.propType) drawPropSprite(ctx, e.propType, px, py);
+            if ((e.disguised || e.isAnonProp) && e.propType) propDrawer(ctx, e.propType, px, py);
             else drawAvatarLabel(ctx, e.avatar || ME, px, py, e.dir || 0, wf, e.name, e.team === "GUARD" ? "#ff5d6c" : "#fff", 0, e.em || 0);
           }
         });
@@ -297,7 +299,9 @@
         if (bx >= 0 && bx <= VW && by >= 0 && by <= VH) { ctx.fillStyle = b[2]; ctx.fillRect(bx, by, 2, 2); }
       });
       const px2 = Math.round(lightX * T - camX), py2 = Math.round(lightZ * T - camY - 8);
-      const rad = [74, 96, 124][CFG.br] || 74;
+      const baseRad = [74, 96, 124][CFG.br] || 74;
+      const rad = (snap.blackout && snap.you.team === "CIVILIAN") ? Math.round(baseRad * 0.55) : baseRad;
+
       dx.globalCompositeOperation = "source-over"; dx.clearRect(0, 0, VW, VH);
       dx.fillStyle = `rgba(4,6,20,${[0.78, 0.56, 0.32][CFG.br] ?? 0.78})`; dx.fillRect(0, 0, VW, VH);
       dx.globalCompositeOperation = "destination-out";
@@ -306,7 +310,6 @@
       dx.fillStyle = grad; dx.beginPath(); dx.arc(px2, py2, rad, 0, Math.PI * 2); dx.fill();
       ctx.drawImage(dm, 0, 0);
 
-      // Render overlay skill peran & kompas keluar di atas kegelapan
       if (W.MS_ROLE_FX) W.MS_ROLE_FX.renderRoleWorldOverlays(ctx, camX, camY, VW, VH, snap, tclock);
       if (W.MS_HUD) W.MS_HUD.drawExitCompass(ctx, VW, VH, snap, tclock);
     }
