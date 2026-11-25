@@ -274,7 +274,7 @@
     }
   });
   
-  socket.on("meeting:update", (m) => {
+    socket.on("meeting:update", (m) => {
     if (W.MS_APP && W.MS_APP.onMeetingUpdate) {
       W.MS_APP.onMeetingUpdate({
         active: true,
