@@ -273,7 +273,23 @@
       });
     }
   });
+  socket.on("meeting:update", (m) => {
+    if (W.MS_APP && W.MS_APP.onMeetingUpdate) {
+      const secs = m.endTime ? Math.max(0, Math.ceil((m.endTime - Date.now()) / 1000)) : 25;
+      W.MS_APP.onMeetingUpdate({
+        active: true,
+        timeLeft: secs,
+        callerName: m.callerName || "Pemain",
+        candidates: m.eligible || []
+      });
+    }
+  });
 
+  socket.on("meeting:result", (r) => {
+    closeSheet();
+    if (r && r.message) toast(r.message, r.ejectedName ? "g" : "i");
+  });
+  
   socket.on("match:result", (res) => {
     latestSnapshot = null;
     const meResult = (res.players || []).find((p) => String(p.id) === myTgId) || { win: false, coins: 10, xp: 30 };
