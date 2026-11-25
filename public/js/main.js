@@ -117,7 +117,7 @@
     audioOn();
     openSheet(
       `<h2>CARA MAIN</h2><div style="line-height:1.9;text-align:left;margin-bottom:8px">` +
-      `1. Sembunyi & tekan NYAMAR jadi benda<br>2. Selesaikan 6 tugas di ruangan<br>` +
+      `1. Sembunyi & tekan NYAMAR jadi benda<br>2. Selesaikan tugas terminal di ruangan<br>` +
       `3. Waspada CEPU yang menyabotase tugas<br>4. Tekan tombol merah di tengah untuk RAPAT<br>` +
       `5. Lari ke PINTU DARURAT kanan saat alarm!</div><button class="pb g" id="hk">OKE</button>`
     );
@@ -384,18 +384,17 @@
       return;
     }
 
-    const nearTerm = (snap.terminals || []).find((t) => !t.done && Math.hypot(t.x - me.x, t.z - me.z) < 2.2);
+    const nearTerm = (snap.terminals || []).find((t) => !t.done && Math.hypot(t.x - me.x, t.z - me.z) < 2.6);
     if (nearTerm) {
-      if (me.team === "TRAITOR") {
-        NET.sendPlayerAction("SABOTAGE", { termIdx: nearTerm.idx });
-      } else {
-        const taskType = nearTerm.type || nearTerm.k || "keypad";
-        openTaskModal(taskType, me.role === "TECHNICIAN", () => NET.sendPlayerAction("TASK_DONE", { termIdx: nearTerm.idx }));
-      }
+      const targetTermId = nearTerm.id !== undefined ? nearTerm.id : nearTerm.idx;
+      const taskType = nearTerm.type || nearTerm.k || "";
+      openTaskModal(taskType, me.role === "TEKNISI", () => {
+        NET.sendPlayerAction("COMPLETE_TASK", { termId: targetTermId });
+      });
       return;
     }
-    if (Math.hypot(32 - me.x, 22 - me.z) < 2.4) {
-      NET.sendPlayerAction("MEETING");
+    if (Math.hypot(32 - me.x, 22 - me.z) < 2.5) {
+      NET.sendPlayerAction("CALL_MEETING");
       return;
     }
     NET.sendPlayerAction("ABILITY");
@@ -506,7 +505,6 @@
     $("bSpr").classList.toggle("off", me.sprintCd > 0);
     $("bSpr").textContent = me.sprintCd > 0 ? `${Math.ceil(me.sprintCd)}S` : "LARI";
 
-    // Ganti musik otomatis ke mode kejar-kejaran jika Satpam sangat dekat
     if (me.team !== "GUARD") {
       const guards = (snap.entities || []).filter((e) => e.team === "GUARD" && !e.dead);
       const minDist = guards.length ? Math.min(...guards.map((g) => Math.hypot(g.x - me.x, g.z - me.z))) : 99;
@@ -521,9 +519,9 @@
       $("bAct").textContent = "PUKUL";
       $("bAct").classList.toggle("off", me.stun > 0);
     } else {
-      const nearTerm = (snap.terminals || []).find((t) => !t.done && Math.hypot(t.x - me.x, t.z - me.z) < 2.2);
-      const nearBtn = Math.hypot(32 - me.x, 22 - me.z) < 2.4;
-      $("bAct").textContent = nearTerm ? (me.team === "TRAITOR" ? "SABOTASE" : "TUGAS") : nearBtn ? "RAPAT" : "SKILL";
+      const nearTerm = (snap.terminals || []).find((t) => !t.done && Math.hypot(t.x - me.x, t.z - me.z) < 2.6);
+      const nearBtn = Math.hypot(32 - me.x, 22 - me.z) < 2.5;
+      $("bAct").textContent = nearTerm ? "TUGAS" : nearBtn ? "RAPAT" : me.role === "CEPU" ? "SABOTASE" : "SKILL";
       $("bAct").classList.toggle("off", !nearTerm && !nearBtn && me.abCd > 0);
     }
     drawMinimap(snap);
@@ -583,7 +581,7 @@
             const px = Math.round(t.x * T - camX), py = Math.round(t.z * T - camY);
             ctx.fillStyle = "#1d2430";
             ctx.fillRect(px - 6, py - 16, 12, 16);
-            ctx.fillStyle = t.done ? "#5ee38b" : Math.sin(tclock * 6) > 0 ? "#ffd23f" : "#5cc8ff";
+            ctx.fillStyle = t.done ? "#5ee38b" : t.sabotaged ? "#ff5d6c" : Math.sin(tclock * 6) > 0 ? "#ffd23f" : "#5cc8ff";
             ctx.fillRect(px - 4, py - 13, 8, 6);
           }
         });
