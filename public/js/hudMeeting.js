@@ -6,6 +6,7 @@
 
   let myVote = null;
   let meetTimer = null;
+  let currentQuotaTier = "";
 
   function onMatchStarted(NET, showScene, info) {
     closeSheet();
@@ -13,15 +14,16 @@
     showScene("hud");
 
     const roleUpper = info.roleName.toUpperCase();
+    currentQuotaTier = info.quotaTier || "";
     $("role").textContent = `${roleUpper} ⓘ`;
     $("role").style.cursor = "pointer";
     $("role").onclick = () => {
-      if (W.MS_ROLE_FX) W.MS_ROLE_FX.showRoleCard(roleUpper);
+      if (W.MS_ROLE_FX) W.MS_ROLE_FX.showRoleCard(roleUpper, currentQuotaTier);
     };
 
     $("bDis").classList.toggle("hide", info.team === "GUARD");
     if (W.MS_ROLE_FX) {
-      W.MS_ROLE_FX.showRoleCard(roleUpper);
+      W.MS_ROLE_FX.showRoleCard(roleUpper, currentQuotaTier);
     } else {
       toast(`PERAN KAMU: ${roleUpper}`, info.team === "GUARD" ? "b" : "g");
     }
@@ -120,21 +122,24 @@
   }
 
   function updateHud(snap) {
-    const m = Math.max(0, Math.ceil(snap.timeLeft));
+    const m = Math.max(0, Math.ceil(snap.timeLeft || 0));
     const ents = snap.entities || [];
     const aliveCivs = ents.filter((e) => !e.dead && !e.escaped && e.team !== "GUARD").length;
     const totalCivs = ents.filter((e) => e.team !== "GUARD").length;
     const me = snap.you;
+
+    const prog = snap.prog ?? snap.progress ?? 0;
+    const need = snap.need ?? snap.quota ?? 4;
+    const abCd = me.abCd ?? me.abilityCd ?? 0;
 
     // Timer + Sisa Penyintas + Indikator HP / Status Kabur
     const hpHearts = me.team === "GUARD" ? "🛡️" : me.escaped ? "🏃" : me.dead ? "👻" : "❤️".repeat(Math.max(1, me.hp || 1));
     $("tm").textContent = `${Math.floor(m / 60)}:${("0" + (m % 60)).slice(-2)} · 👥${aliveCivs}/${totalCivs} ${hpHearts}`;
 
     // Status 1 baris rapi agar tidak turun menabrak minimap
-    $("tl").textContent = snap.gatesOpen ? "🚨 EXIT KANAN!" : `TUGAS ${snap.prog}/${snap.need}`;
-    $("tb").style.width = `${Math.min(100, (snap.prog / snap.need) * 100)}%`;
+    $("tl").textContent = snap.gatesOpen ? "🚨 EXIT KANAN!" : `TUGAS ${prog}/${need}`;
+    $("tb").style.width = `${Math.min(100, (prog / Math.max(1, need)) * 100)}%`;
 
-    // Sembunyikan tombol kontrol jika sudah berhasil kabur / mati
     const locked = Boolean(me.escaped || me.dead);
     $("bDis").classList.toggle("hide", me.team === "GUARD" || locked);
     $("bSpr").classList.toggle("hide", locked);
@@ -157,8 +162,8 @@
       ? W.MS_ROLE_FX.getActionButtonLabel(me, snap, nearTerm, nearBtn)
       : me.team === "GUARD" ? "PUKUL" : nearTerm ? "TUGAS" : nearBtn ? "RAPAT" : "SKILL";
 
-    const onCd = me.team === "GUARD" ? me.stun > 0 : (!nearTerm && !nearBtn && me.abCd > 0);
-    $("bAct").textContent = (!nearTerm && !nearBtn && me.abCd > 0) ? `${Math.ceil(me.abCd)}S` : baseLabel;
+    const onCd = me.team === "GUARD" ? me.stun > 0 : (!nearTerm && !nearBtn && abCd > 0);
+    $("bAct").textContent = (!nearTerm && !nearBtn && abCd > 0) ? `${Math.ceil(abCd)}S` : baseLabel;
     $("bAct").classList.toggle("off", onCd);
 
     drawMinimap(snap);
@@ -176,7 +181,6 @@
     ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate(ang);
-    // Panah piksel mengarah ke Pintu Darurat Kanan
     ctx.fillStyle = pulse ? "#22c55e" : "#facc15";
     ctx.fillRect(-6, -3, 8, 6);
     ctx.fillRect(2, -5, 3, 10);
