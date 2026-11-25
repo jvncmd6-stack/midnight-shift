@@ -3,391 +3,371 @@
   const { $, vib, openSheet, closeSheet, toast } = W.MS_CFG;
   const { beep } = W.MS_AUDIO;
 
-  let activeCleanup = null;
-  let rotationCounter = 0;
+  // Muat taskGfx.js otomatis jika belum terpasang di index.html
+  if (!W.MS_TASK_GFX) {
+    const s = document.createElement("script");
+    s.src = "/js/taskGfx.js";
+    document.head.appendChild(s);
+  }
 
-  function cleanupActive() {
-    if (typeof activeCleanup === "function") {
-      activeCleanup();
-      activeCleanup = null;
+  let cleanupFn = null;
+  let lastKind = "";
+  let deck = [];
+
+  function stopLoop() {
+    if (typeof cleanupFn === "function") {
+      cleanupFn();
+      cleanupFn = null;
     }
   }
 
-  function wrapCrtFrame(title, subtitle, bodyHtml) {
-    return (
-      `<div class="px-crt" style="background:#080d18;border:3px solid #38bdf8;box-shadow:inset 0 0 18px rgba(56,189,248,.22),0 4px 0 #020617;padding:10px;position:relative;overflow:hidden">` +
-      `<div style="position:absolute;inset:0;pointer-events:none;background:repeating-linear-gradient(0deg,rgba(0,0,0,.22) 0px,rgba(0,0,0,.22) 1px,transparent 1px,transparent 3px)"></div>` +
-      `<div style="display:flex;align-items:center;justify-content:space-between;border-bottom:2px solid #1e293b;padding-bottom:6px;margin-bottom:8px">` +
-      `<div style="display:flex;gap:4px"><span style="width:7px;height:7px;background:#ef4444;display:inline-block"></span><span style="width:7px;height:7px;background:#facc15;display:inline-block"></span><span style="width:7px;height:7px;background:#22c55e;display:inline-block"></span></div>` +
-      `<span style="font-size:8px;color:#38bdf8;letter-spacing:1px">SYS.TERM // ${title}</span>` +
-      `</div>` +
-      `<p style="font-size:9px;color:#cbd5e1;margin:0 0 8px;line-height:1.4">${subtitle}</p>` +
-      bodyHtml +
-      `<button class="pb d" id="tCancel" style="margin-top:10px;width:100%">✖ TUTUP TERMINAL</button>` +
-      `</div>`
-    );
-  }
-
-  function resolveTaskKind(rawType) {
+  function pickVariedKind(rawType) {
     const t = String(rawType || "").toLowerCase();
-    if (t.includes("wir") || t.includes("kab")) return "wiring";
-    if (t.includes("freq") || t.includes("slid") || t.includes("cal") || t.includes("sinyal")) return "frequency";
-    if (t.includes("scan") || t.includes("bio") || t.includes("sidik")) return "biometric";
-    if (t.includes("fuse") || t.includes("sek") || t.includes("pow") || t.includes("listrik")) return "fuse";
-    if (t.includes("serv") || t.includes("data") || t.includes("up") || t.includes("down")) return "server";
-    if (t.includes("key") || t.includes("pin") || t.includes("code")) return "keypad";
+    let mapped = null;
+    if (t.includes("wir") || t.includes("kab")) mapped = "wiring";
+    else if (t.includes("freq") || t.includes("slid") || t.includes("cal")) mapped = "frequency";
+    else if (t.includes("scan") || t.includes("bio")) mapped = "biometric";
+    else if (t.includes("fuse") || t.includes("pow") || t.includes("sek")) mapped = "fuse";
+    else if (t.includes("serv") || t.includes("data") || t.includes("up")) mapped = "server";
+    else if (t.includes("key") || t.includes("pin") || t.includes("code")) mapped = "keypad";
 
-    // Rotasi otomatis 6 mini-game jika tipe terminal generik / tidak spesifik
-    const pool = ["wiring", "frequency", "biometric", "fuse", "server", "keypad"];
-    const picked = pool[rotationCounter % pool.length];
-    rotationCounter++;
-    return picked;
+    // Jika tipe terminal sama dengan tugas terakhir, ambil dari dek rotasi agar selalu variatif
+    if (mapped && mapped !== lastKind) {
+      lastKind = mapped;
+      return mapped;
+    }
+
+    if (deck.length === 0) {
+      deck = ["wiring", "frequency", "biometric", "fuse", "server", "keypad"].sort(() => Math.random() - 0.5);
+      if (deck[0] === lastKind) deck.push(deck.shift());
+    }
+    const chosen = deck.shift();
+    lastKind = chosen;
+    return chosen;
   }
 
   /* ========================================================================
-     1. SAMBUNG KABEL PANEL (Canvas Visual + Spark Effect)
+     1. SAMBUNG KABEL PANEL (Canvas Kabel Piksel + Percikan Api)
      ======================================================================== */
-  function runWiringTask(isTech, onComplete) {
-    const palette = [
+  function playWiring(gfx, _isTech, finish) {
+    const colors = [
       { id: 0, name: "MERAH", hex: "#ef4444", dark: "#7f1d1d" },
       { id: 1, name: "BIRU", hex: "#38bdf8", dark: "#0c4a6e" },
       { id: 2, name: "KUNING", hex: "#facc15", dark: "#713f12" },
       { id: 3, name: "HIJAU", hex: "#22c55e", dark: "#14532d" }
     ];
-    const leftOrder = [...palette].sort(() => Math.random() - 0.5);
-    const rightOrder = [...palette].sort(() => Math.random() - 0.5);
-    const connected = new Set();
-    let selectedLeft = null;
+    const left = [...colors].sort(() => Math.random() - 0.5);
+    const right = [...colors].sort(() => Math.random() - 0.5);
+    const doneSet = new Set();
+    const sparks = [];
+    let selLeft = null;
 
     openSheet(
-      wrapCrtFrame(
-        "PANEL KABEL",
-        "Klik soket kiri lalu klik soket kanan dengan warna yang sama!",
-        `<canvas id="wireCv" width="260" height="156" style="width:100%;background:#04070f;border:2px solid #334155;image-rendering:pixelated;display:block"></canvas>` +
-        `<div style="display:flex;justify-content:space-between;margin-top:8px;gap:6px">` +
-        `<div id="wLeft" style="display:flex;flex-direction:column;gap:5px;width:48%"></div>` +
-        `<div id="wRight" style="display:flex;flex-direction:column;gap:5px;width:48%"></div>` +
-        `</div>`
-      )
+      gfx.renderCrtShell({
+        code: "TERM-01",
+        title: "PANEL KABEL",
+        subtitle: "Hubungkan soket kiri ke soket kanan dengan warna kabel yang sama!",
+        accent: gfx.PAL.cyan,
+        bodyHtml:
+          `<canvas id="wCv" width="260" height="148" style="width:100%;border:2px solid #334155;image-rendering:pixelated;display:block"></canvas>` +
+          `<div style="display:flex;justify-content:space-between;gap:6px;margin-top:8px">` +
+          `<div id="wColL" style="display:flex;flex-direction:column;gap:5px;width:48%"></div>` +
+          `<div id="wColR" style="display:flex;flex-direction:column;gap:5px;width:48%"></div>` +
+          `</div>`
+      })
     );
 
-    const drawWires = () => {
-      const cv = $("wireCv");
-      if (!cv) return;
+    const rowY = [22, 56, 90, 124];
+    const anim = setInterval(() => {
+      const cv = $("wCv");
+      if (!cv) return clearInterval(anim);
       const ctx = cv.getContext("2d");
-      ctx.fillStyle = "#04070f";
-      ctx.fillRect(0, 0, cv.width, cv.height);
+      gfx.drawPixelGrid(ctx, cv.width, cv.height);
 
-      // Grid latar piksel
-      ctx.fillStyle = "#0f172a";
-      for (let gx = 8; gx < cv.width; gx += 16) {
-        for (let gy = 8; gy < cv.height; gy += 16) ctx.fillRect(gx, gy, 2, 2);
-      }
-
-      const rowY = [24, 58, 92, 126];
-      leftOrder.forEach((c, idx) => {
-        const y = rowY[idx];
+      left.forEach((c, i) => {
+        const y = rowY[i];
         ctx.fillStyle = c.dark;
         ctx.fillRect(0, y - 8, 28, 16);
         ctx.fillStyle = c.hex;
-        ctx.fillRect(4, y - 5, 20, 10);
-        if (selectedLeft === c.id) {
-          ctx.strokeStyle = "#ffffff";
+        ctx.fillRect(4, y - 5, 22, 10);
+        if (selLeft === c.id) {
+          ctx.strokeStyle = "#fff";
           ctx.lineWidth = 2;
           ctx.strokeRect(2, y - 10, 26, 20);
         }
       });
 
-      rightOrder.forEach((c, idx) => {
-        const y = rowY[idx];
+      right.forEach((c, i) => {
+        const y = rowY[i];
         ctx.fillStyle = c.dark;
         ctx.fillRect(cv.width - 28, y - 8, 28, 16);
         ctx.fillStyle = c.hex;
-        ctx.fillRect(cv.width - 24, y - 5, 20, 10);
+        ctx.fillRect(cv.width - 26, y - 5, 22, 10);
       });
 
-      // Gambar kabel yang sudah tersambung dengan gaya stepped pixel
-      connected.forEach((colorId) => {
-        const lIdx = leftOrder.findIndex((x) => x.id === colorId);
-        const rIdx = rightOrder.findIndex((x) => x.id === colorId);
-        const c = palette[colorId];
-        const y1 = rowY[lIdx];
-        const y2 = rowY[rIdx];
-
+      doneSet.forEach((id) => {
+        const li = left.findIndex((x) => x.id === id);
+        const ri = right.findIndex((x) => x.id === id);
+        const c = colors[id];
+        const y1 = rowY[li];
+        const y2 = rowY[ri];
         ctx.strokeStyle = c.hex;
         ctx.lineWidth = 6;
         ctx.beginPath();
         ctx.moveTo(28, y1);
-        ctx.lineTo(110, y1);
-        ctx.lineTo(150, y2);
+        ctx.lineTo(106, y1);
+        ctx.lineTo(154, y2);
         ctx.lineTo(cv.width - 28, y2);
         ctx.stroke();
-
-        ctx.fillStyle = "#ffffff";
+        ctx.fillStyle = "#fff";
         ctx.fillRect(126, Math.round((y1 + y2) / 2) - 2, 8, 4);
       });
-    };
 
-    const renderButtons = () => {
-      const lBox = $("wLeft");
-      const rBox = $("wRight");
-      if (!lBox || !rBox) return;
+      gfx.stepAndDrawSparks(ctx, sparks);
+    }, 35);
+    cleanupFn = () => clearInterval(anim);
 
-      lBox.innerHTML = leftOrder.map((c) => {
-        const done = connected.has(c.id);
-        const active = selectedLeft === c.id;
-        return `<button class="chip" data-lid="${c.id}" style="background:${done ? "#1e293b" : c.hex};color:${done ? "#64748b" : "#050811"};border:2px solid ${active ? "#fff" : "#0f172a"};font-size:8px;padding:7px 4px">${done ? "✓ " : "▶ "}${c.name}</button>`;
+    const renderBtns = () => {
+      const boxL = $("wColL");
+      const boxR = $("wColR");
+      if (!boxL || !boxR) return;
+
+      boxL.innerHTML = left.map((c) => {
+        const ok = doneSet.has(c.id);
+        return gfx.drawPixelButton(
+          `${ok ? "✓ " : "▶ "}${c.name}`,
+          `data-l="${c.id}"`,
+          ok ? "#1e293b" : c.hex,
+          ok ? "#64748b" : "#050914",
+          selLeft === c.id ? "#ffffff" : "#0f172a"
+        );
       }).join("");
 
-      rBox.innerHTML = rightOrder.map((c) => {
-        const done = connected.has(c.id);
-        return `<button class="chip" data-rid="${c.id}" style="background:${done ? "#1e293b" : c.hex};color:${done ? "#64748b" : "#050811"};border:2px solid #0f172a;font-size:8px;padding:7px 4px">${c.name}${done ? " ✓" : " ◀"}</button>`;
+      boxR.innerHTML = right.map((c) => {
+        const ok = doneSet.has(c.id);
+        return gfx.drawPixelButton(
+          `${c.name}${ok ? " ✓" : " ◀"}`,
+          `data-r="${c.id}"`,
+          ok ? "#1e293b" : c.hex,
+          ok ? "#64748b" : "#050914"
+        );
       }).join("");
 
-      lBox.querySelectorAll("button").forEach((b) => {
+      boxL.querySelectorAll("button").forEach((b) => {
         b.onclick = () => {
-          const id = Number(b.dataset.lid);
-          if (connected.has(id)) return;
-          selectedLeft = id;
-          beep(440, 0.05);
+          const id = Number(b.dataset.l);
+          if (doneSet.has(id)) return;
+          selLeft = id;
+          beep(450, 0.05);
           vib(8);
-          drawWires();
-          renderButtons();
+          renderBtns();
         };
       });
 
-      rBox.querySelectorAll("button").forEach((b) => {
+      boxR.querySelectorAll("button").forEach((b) => {
         b.onclick = () => {
-          const id = Number(b.dataset.rid);
-          if (connected.has(id)) return;
-          if (selectedLeft === null) {
-            toast("Pilih soket kiri dulu!", "i");
-            return;
-          }
-          if (selectedLeft === id) {
-            connected.add(id);
-            selectedLeft = null;
-            beep(560 + connected.size * 90, 0.08);
+          const id = Number(b.dataset.r);
+          if (doneSet.has(id)) return;
+          if (selLeft === null) return toast("Pilih soket kiri dulu!", "i");
+          const rIdx = right.findIndex((x) => x.id === id);
+          if (selLeft === id) {
+            doneSet.add(id);
+            gfx.spawnPixelSparks(sparks, 232, rowY[rIdx], colors[id].hex, 14);
+            selLeft = null;
+            beep(560 + doneSet.size * 90, 0.08);
             vib(15);
-            drawWires();
-            renderButtons();
-            if (connected.size >= 4) {
-              setTimeout(() => {
-                cleanupActive();
-                closeSheet();
-                toast("KABEL PANEL TERSAMBUNG!", "g");
-                onComplete();
-              }, 220);
+            renderBtns();
+            if (doneSet.size >= 4) {
+              setTimeout(() => { stopLoop(); closeSheet(); finish(); }, 280);
             }
           } else {
-            selectedLeft = null;
+            gfx.spawnPixelSparks(sparks, 232, rowY[rIdx], "#ef4444", 10);
+            selLeft = null;
             beep(150, 0.14);
             vib(35);
-            toast("KORSLETING! WARNA TIDAK COCOK", "b");
-            drawWires();
-            renderButtons();
+            toast("KORSLETING! WARNA SALAH", "b");
+            renderBtns();
           }
         };
       });
     };
 
-    drawWires();
-    renderButtons();
-    $("tCancel").onclick = () => { cleanupActive(); closeSheet(); };
+    renderBtns();
+    $("tCancel").onclick = () => { stopLoop(); closeSheet(); };
   }
 
   /* ========================================================================
-     2. KALIBRASI GELOMBANG FREKUENSI (Osiloskop Pixel Art)
+     2. OSILOSKOP FREKUENSI SINYAL (Dual-Wave Pixel Scope)
      ======================================================================== */
-  function runFrequencyTask(isTech, onComplete) {
+  function playFrequency(gfx, isTech, finish) {
     const targetFreq = 2 + Math.floor(Math.random() * 5);
     let userFreq = 1;
     let phase = 0;
-    let lockProgress = 0;
-    const needLock = isTech ? 22 : 34;
+    let lock = 0;
+    const goal = isTech ? 20 : 32;
 
     openSheet(
-      wrapCrtFrame(
-        "OSILOSKOP SINYAL",
-        "Geser frekuensi hingga gelombang kuning menyatu dengan hijau!",
-        `<canvas id="oscCv" width="260" height="110" style="width:100%;background:#030712;border:2px solid #22c55e;image-rendering:pixelated;display:block"></canvas>` +
-        `<div style="margin:8px 0 4px;font-size:8px;color:#22c55e">SINKRONISASI: <span id="oscPct">0%</span></div>` +
-        `<input id="oscRange" type="range" min="1" max="7" step="0.1" value="1" style="width:100%;accent-color:#facc15;cursor:pointer">`
-      )
+      gfx.renderCrtShell({
+        code: "TERM-02",
+        title: "OSILOSKOP RADIO",
+        subtitle: "Geser tuas frekuensi sampai gelombang kuning menyatu dengan hijau!",
+        accent: gfx.PAL.green,
+        bodyHtml:
+          `<canvas id="fCv" width="260" height="112" style="width:100%;border:2px solid #22c55e;image-rendering:pixelated;display:block"></canvas>` +
+          `<div style="margin:8px 0 4px;font-size:8px;color:#22c55e">SINKRONISASI SINYAL: <span id="fPct">0%</span></div>` +
+          `<input id="fRng" type="range" min="1" max="7" step="0.1" value="1" style="width:100%;accent-color:#facc15">`
+      })
     );
 
-    const slider = $("oscRange");
-    slider.oninput = () => { userFreq = parseFloat(slider.value); };
+    $("fRng").oninput = (e) => { userFreq = parseFloat(e.target.value); };
 
     const iv = setInterval(() => {
-      const cv = $("oscCv");
+      const cv = $("fCv");
       if (!cv) return clearInterval(iv);
       const ctx = cv.getContext("2d");
-      phase += 0.18;
+      phase += 0.2;
+      gfx.drawPixelGrid(ctx, cv.width, cv.height, 20, "#0b2418");
 
-      ctx.fillStyle = "#030712";
-      ctx.fillRect(0, 0, cv.width, cv.height);
+      ctx.fillStyle = "#14532d";
+      ctx.fillRect(0, 55, cv.width, 2);
 
-      // Garis tengah CRT
-      ctx.fillStyle = "#0f291e";
-      ctx.fillRect(0, 54, cv.width, 2);
-
-      // Gelombang Target (Hijau)
+      // Gelombang Target
       ctx.fillStyle = "#22c55e";
       for (let x = 0; x < cv.width; x += 4) {
-        const y = 55 + Math.sin(x * 0.03 * targetFreq + phase) * 34;
+        const y = 56 + Math.sin(x * 0.03 * targetFreq + phase) * 34;
         ctx.fillRect(x, Math.round(y), 3, 3);
       }
 
-      // Gelombang Pemain (Kuning)
-      const diff = Math.abs(userFreq - targetFreq);
-      const matched = diff <= 0.35;
-      ctx.fillStyle = matched ? "#ffffff" : "#facc15";
+      // Gelombang User
+      const ok = Math.abs(userFreq - targetFreq) <= 0.35;
+      ctx.fillStyle = ok ? "#ffffff" : "#facc15";
       for (let x = 0; x < cv.width; x += 4) {
-        const y = 55 + Math.sin(x * 0.03 * userFreq + phase) * 34;
+        const y = 56 + Math.sin(x * 0.03 * userFreq + phase) * 34;
         ctx.fillRect(x, Math.round(y), 3, 3);
       }
 
-      if (matched) {
-        lockProgress++;
-        if (lockProgress % 6 === 0) beep(520 + lockProgress * 12, 0.04);
-      } else {
-        lockProgress = Math.max(0, lockProgress - 1);
-      }
+      lock = ok ? lock + 1 : Math.max(0, lock - 1);
+      if (ok && lock % 6 === 0) beep(520 + lock * 10, 0.04);
 
-      const pct = Math.min(100, Math.round((lockProgress / needLock) * 100));
-      if ($("oscPct")) $("oscPct").textContent = pct + "%";
+      const pct = Math.min(100, Math.round((lock / goal) * 100));
+      if ($("fPct")) $("fPct").textContent = pct + "%";
 
-      if (lockProgress >= needLock) {
+      if (lock >= goal) {
         clearInterval(iv);
         beep(780, 0.12);
-        vib(20);
+        vib(18);
         closeSheet();
-        toast("FREKUENSI TERKUNCI!", "g");
-        onComplete();
+        finish();
       }
     }, 45);
-
-    activeCleanup = () => clearInterval(iv);
-    $("tCancel").onclick = () => { cleanupActive(); closeSheet(); };
+    cleanupFn = () => clearInterval(iv);
+    $("tCancel").onclick = () => { stopLoop(); closeSheet(); };
   }
 
   /* ========================================================================
-     3. PEMINDAI BIOMETRIK LASER (Hold-to-Scan Pixel Finger)
+     3. PEMINDAI BIOMETRIK LASER (Hold-to-Scan Pixel Matrix)
      ======================================================================== */
-  function runBiometricTask(isTech, onComplete) {
-    let progress = 0;
-    let scanning = false;
-    let laserY = 10;
-    let laserDir = 1;
-    const speed = isTech ? 2.6 : 1.8;
+  function playBiometric(gfx, isTech, finish) {
+    let pct = 0;
+    let hold = false;
+    let ly = 14;
+    let dir = 1;
+    const rate = isTech ? 2.7 : 1.9;
 
     openSheet(
-      wrapCrtFrame(
-        "SCANNER BIOMETRIK",
-        "Tahan tombol PINDAI di bawah sampai verifikasi 100%!",
-        `<canvas id="bioCv" width="260" height="120" style="width:100%;background:#040914;border:2px solid #38bdf8;image-rendering:pixelated;display:block"></canvas>` +
-        `<button class="pb g" id="bioHold" style="margin-top:8px;width:100%;user-select:none">🖐 TAHAN UNTUK MEMINDAI (<span id="bioPct">0%</span>)</button>`
-      )
+      gfx.renderCrtShell({
+        code: "TERM-03",
+        title: "SCAN BIOMETRIK",
+        subtitle: "Tahan tombol pemindai di bawah sampai laser mencapai 100%!",
+        accent: gfx.PAL.cyan,
+        bodyHtml:
+          `<canvas id="bCv" width="260" height="118" style="width:100%;border:2px solid #38bdf8;image-rendering:pixelated;display:block"></canvas>` +
+          `<button class="pb g" id="bBtn" style="margin-top:8px;width:100%;user-select:none">🖐 TAHAN PEMINDAI (<span id="bPct">0%</span>)</button>`
+      })
     );
 
-    const btn = $("bioHold");
-    btn.onpointerdown = () => { scanning = true; beep(420, 0.05); };
-    btn.onpointerup = () => { scanning = false; };
-    btn.onpointerleave = () => { scanning = false; };
+    const btn = $("bBtn");
+    btn.onpointerdown = () => { hold = true; beep(430, 0.05); };
+    btn.onpointerup = () => { hold = false; };
+    btn.onpointerleave = () => { hold = false; };
 
     const iv = setInterval(() => {
-      const cv = $("bioCv");
+      const cv = $("bCv");
       if (!cv) return clearInterval(iv);
       const ctx = cv.getContext("2d");
+      gfx.drawPixelGrid(ctx, cv.width, cv.height);
 
-      ctx.fillStyle = "#040914";
-      ctx.fillRect(0, 0, cv.width, cv.height);
-
-      // Pola sidik jari piksel di tengah
-      const cx = 130;
-      const cy = 60;
       for (let r = 10; r <= 42; r += 8) {
-        ctx.strokeStyle = scanning ? "#38bdf8" : "#1e3a5f";
+        ctx.strokeStyle = hold ? "#38bdf8" : "#1e3a5f";
         ctx.lineWidth = 3;
-        ctx.strokeRect(cx - r * 0.7, cy - r, r * 1.4, r * 2);
+        ctx.strokeRect(130 - r * 0.7, 59 - r, r * 1.4, r * 2);
       }
 
-      if (scanning) {
-        progress = Math.min(100, progress + speed);
-        laserY += laserDir * 4;
-        if (laserY >= 108 || laserY <= 12) laserDir *= -1;
-        if (Math.round(progress) % 15 === 0) beep(500 + progress * 4, 0.03);
-
-        // Sinar laser pemindai
+      if (hold) {
+        pct = Math.min(100, pct + rate);
+        ly += dir * 4;
+        if (ly >= 104 || ly <= 14) dir *= -1;
+        if (Math.round(pct) % 16 === 0) beep(520 + pct * 3, 0.03);
         ctx.fillStyle = "#22c55e";
-        ctx.fillRect(65, laserY, 130, 3);
-        ctx.fillStyle = "rgba(34,197,94,0.22)";
-        ctx.fillRect(65, laserY - 6, 130, 14);
+        ctx.fillRect(65, ly, 130, 3);
+        ctx.fillStyle = "rgba(34,197,94,.22)";
+        ctx.fillRect(65, ly - 5, 130, 12);
       }
 
-      if ($("bioPct")) $("bioPct").textContent = Math.floor(progress) + "%";
-
-      if (progress >= 100) {
+      if ($("bPct")) $("bPct").textContent = Math.floor(pct) + "%";
+      if (pct >= 100) {
         clearInterval(iv);
         beep(820, 0.12);
-        vib(20);
+        vib(18);
         closeSheet();
-        toast("IDENTITAS TERVERIFIKASI!", "g");
-        onComplete();
+        finish();
       }
     }, 35);
-
-    activeCleanup = () => clearInterval(iv);
-    $("tCancel").onclick = () => { cleanupActive(); closeSheet(); };
+    cleanupFn = () => clearInterval(iv);
+    $("tCancel").onclick = () => { stopLoop(); closeSheet(); };
   }
 
   /* ========================================================================
-     4. PANEL SEKRING TEGANGAN (Simon-Says / Urutan Sakelar LED)
+     4. PANEL SEKRING TEGANGAN (Sakelar Pemutus Arus Berurutan)
      ======================================================================== */
-  function runFuseTask(isTech, onComplete) {
-    const count = isTech ? 4 : 5;
-    const seq = Array.from({ length: count }, () => Math.floor(Math.random() * 4));
+  function playFuse(gfx, isTech, finish) {
+    const len = isTech ? 4 : 5;
+    const seq = Array.from({ length: len }, () => Math.floor(Math.random() * 4));
     let step = 0;
 
     const render = () => {
-      const leds = seq.map((s, idx) => {
-        const done = idx < step;
-        const curr = idx === step;
-        const bg = done ? "#22c55e" : curr ? "#facc15" : "#1e293b";
-        return `<div style="flex:1;padding:6px 2px;background:${bg};color:#050811;font-size:9px;text-align:center;border:2px solid #0f172a">S${s + 1}</div>`;
+      const leds = seq.map((s, i) => {
+        const bg = i < step ? "#22c55e" : i === step ? "#facc15" : "#1e293b";
+        return `<div style="flex:1;padding:6px 2px;background:${bg};color:#050914;font-size:9px;text-align:center;border:2px solid #0f172a">S${s + 1}</div>`;
       }).join("");
 
-      const switches = [0, 1, 2, 3].map((i) =>
-        `<button class="chip" data-sw="${i}" style="width:22%;padding:14px 0;background:#1e293b;color:#38bdf8;border:2px solid #38bdf8;font-size:10px">⚡ S${i + 1}</button>`
+      const btns = [0, 1, 2, 3].map((i) =>
+        gfx.drawPixelButton(`⚡ S${i + 1}`, `data-sw="${i}" style="width:22%;padding:14px 0"`, "#1e293b", "#38bdf8", "#38bdf8")
       ).join("");
 
       openSheet(
-        wrapCrtFrame(
-          "PANEL SEKRING",
-          "Nyalakan sakelar daya sesuai urutan indikator kuning!",
-          `<div style="display:flex;gap:4px;margin-bottom:12px">${leds}</div>` +
-          `<div style="display:flex;justify-content:space-between;gap:4px">${switches}</div>`
-        )
+        gfx.renderCrtShell({
+          code: "TERM-04",
+          title: "GARDU SEKRING",
+          subtitle: "Nyalakan sakelar listrik sesuai urutan indikator kuning!",
+          accent: gfx.PAL.amber,
+          bodyHtml:
+            `<div style="display:flex;gap:4px;margin-bottom:12px">${leds}</div>` +
+            `<div style="display:flex;justify-content:space-between;gap:4px">${btns}</div>`
+        })
       );
 
       document.querySelectorAll("#box .chip[data-sw]").forEach((b) => {
         b.onclick = () => {
-          const picked = Number(b.dataset.sw);
-          if (picked === seq[step]) {
-            beep(480 + step * 95, 0.07);
+          if (Number(b.dataset.sw) === seq[step]) {
+            beep(490 + step * 90, 0.07);
             vib(12);
             step++;
-            if (step >= count) {
-              closeSheet();
-              toast("ARUS LISTRIK STABIL!", "g");
-              onComplete();
-            } else {
-              render();
-            }
+            if (step >= len) { closeSheet(); finish(); }
+            else render();
           } else {
-            beep(140, 0.16);
-            vib(40);
+            beep(140, 0.15);
+            vib(35);
             step = 0;
             toast("URUTAN SALAH! ULANG DARI AWAL", "b");
             render();
@@ -400,101 +380,100 @@
   }
 
   /* ========================================================================
-     5. SINKRONISASI SERVER DATA (Tangkap Paket Piksel)
+     5. BUFFER SERVER DATA (Tangkap Paket Piksel ke Slot Server)
      ======================================================================== */
-  function runServerTask(isTech, onComplete) {
+  function playServer(gfx, isTech, finish) {
     let caught = 0;
-    const target = isTech ? 4 : 5;
-    let bucketX = 110;
-    let pktX = 40 + Math.random() * 180;
-    let pktY = 10;
+    const goal = isTech ? 4 : 5;
+    let bx = 108;
+    let px = 30 + Math.random() * 190;
+    let py = 8;
 
     openSheet(
-      wrapCrtFrame(
-        "SERVER BUFFER",
-        `Tangkap paket data hijau ke dalam slot server (${caught}/${target})!`,
-        `<canvas id="srvCv" width="260" height="125" style="width:100%;background:#030712;border:2px solid #a855f7;image-rendering:pixelated;display:block"></canvas>` +
-        `<div style="display:flex;gap:8px;margin-top:8px">` +
-        `<button class="pb" id="srvL" style="flex:1">◀ KIRI</button>` +
-        `<button class="pb" id="srvR" style="flex:1">KANAN ▶</button>` +
-        `</div>`
-      )
+      gfx.renderCrtShell({
+        code: "TERM-05",
+        title: "SERVER BUFFER",
+        subtitle: "Gerakkan slot ungu untuk menangkap paket data hijau!",
+        accent: gfx.PAL.purple,
+        bodyHtml:
+          `<canvas id="sCv" width="260" height="122" style="width:100%;border:2px solid #a855f7;image-rendering:pixelated;display:block"></canvas>` +
+          `<div style="display:flex;gap:8px;margin-top:8px">` +
+          `<button class="pb" id="sL" style="flex:1">◀ GESER KIRI</button>` +
+          `<button class="pb" id="sR" style="flex:1">GESER KANAN ▶</button>` +
+          `</div>`
+      })
     );
 
-    $("srvL").onclick = () => { bucketX = Math.max(10, bucketX - 36); beep(380, 0.03); };
-    $("srvR").onclick = () => { bucketX = Math.min(206, bucketX + 36); beep(420, 0.03); };
+    $("sL").onclick = () => { bx = Math.max(8, bx - 38); beep(390, 0.03); };
+    $("sR").onclick = () => { bx = Math.min(208, bx + 38); beep(430, 0.03); };
 
     const iv = setInterval(() => {
-      const cv = $("srvCv");
+      const cv = $("sCv");
       if (!cv) return clearInterval(iv);
       const ctx = cv.getContext("2d");
 
-      pktY += 3.6;
-      if (pktY >= 98 && pktY <= 116 && pktX + 12 >= bucketX && pktX <= bucketX + 44) {
+      py += 3.7;
+      if (py >= 96 && py <= 114 && px + 12 >= bx && px <= bx + 44) {
         caught++;
-        beep(600 + caught * 70, 0.07);
+        beep(610 + caught * 70, 0.07);
         vib(14);
-        pktY = 8;
-        pktX = 20 + Math.random() * 210;
-        if (caught >= target) {
+        py = 8;
+        px = 20 + Math.random() * 210;
+        if (caught >= goal) {
           clearInterval(iv);
           closeSheet();
-          toast("DATA SERVER TERSINKRON!", "g");
-          onComplete();
+          finish();
           return;
         }
-      } else if (pktY > 125) {
-        pktY = 8;
-        pktX = 20 + Math.random() * 210;
-        beep(180, 0.08);
+      } else if (py > 122) {
+        py = 8;
+        px = 20 + Math.random() * 210;
+        beep(170, 0.08);
       }
 
-      ctx.fillStyle = "#030712";
-      ctx.fillRect(0, 0, cv.width, cv.height);
-
-      // Paket data jatuh
+      gfx.drawPixelGrid(ctx, cv.width, cv.height, 18, "#180f29");
       ctx.fillStyle = "#22c55e";
-      ctx.fillRect(Math.round(pktX), Math.round(pktY), 12, 12);
+      ctx.fillRect(Math.round(px), Math.round(py), 12, 12);
       ctx.fillStyle = "#bbf7d0";
-      ctx.fillRect(Math.round(pktX) + 3, Math.round(pktY) + 3, 6, 6);
+      ctx.fillRect(Math.round(px) + 3, Math.round(py) + 3, 6, 6);
 
-      // Slot penerima server
       ctx.fillStyle = "#a855f7";
-      ctx.fillRect(bucketX, 104, 44, 12);
+      ctx.fillRect(bx, 102, 44, 12);
       ctx.fillStyle = "#f3e8ff";
-      ctx.fillRect(bucketX + 4, 104, 36, 3);
+      ctx.fillRect(bx + 4, 102, 36, 3);
 
-      // Skor piksel pojok
       ctx.fillStyle = "#e2e8f0";
       ctx.font = "10px monospace";
-      ctx.fillText(`PAKET: ${caught}/${target}`, 8, 14);
+      ctx.fillText(`DATA: ${caught}/${goal}`, 8, 14);
     }, 35);
-
-    activeCleanup = () => clearInterval(iv);
-    $("tCancel").onclick = () => { cleanupActive(); closeSheet(); };
+    cleanupFn = () => clearInterval(iv);
+    $("tCancel").onclick = () => { stopLoop(); closeSheet(); };
   }
 
   /* ========================================================================
-     6. DEKRIPSI KODE TERMINAL CRT (Keypad Mekanik)
+     6. DEKRIPSI PIN KEAMANAN (Keypad Terminal Fosfor)
      ======================================================================== */
-  function runKeypadTask(isTech, onComplete) {
+  function playKeypad(gfx, isTech, finish) {
     const len = isTech ? 3 : 4;
     let pin = "";
     for (let i = 0; i < len; i++) pin += Math.floor(Math.random() * 9) + 1;
     let typed = "";
 
-    const renderPad = () => {
+    const render = () => {
       const nums = [1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) =>
-        `<button class="chip" data-n="${n}" style="width:29%;padding:10px 0;font-size:11px;background:#0f172a;color:#38bdf8;border:2px solid #334155">${n}</button>`
+        gfx.drawPixelButton(String(n), `data-n="${n}" style="width:29%;padding:10px 0;font-size:11px"`, "#0f172a", "#38bdf8", "#334155")
       ).join("");
 
       openSheet(
-        wrapCrtFrame(
-          "DEKRIPSI PIN",
-          `Masukkan kode akses terminal: <b style="color:#facc15;font-size:11px">${pin}</b>`,
-          `<div style="background:#020617;border:2px solid #22c55e;color:#22c55e;font-size:14px;letter-spacing:6px;text-align:center;padding:8px;margin-bottom:8px">${typed.padEnd(len, "_")}</div>` +
-          `<div class="rw" style="justify-content:center;gap:6px">${nums}</div>`
-        )
+        gfx.renderCrtShell({
+          code: "TERM-06",
+          title: "DEKRIPSI SANDI",
+          subtitle: `Masukkan kode keamanan: <b style="color:#facc15;font-size:11px">${pin}</b>`,
+          accent: gfx.PAL.green,
+          bodyHtml:
+            `<div style="background:#020617;border:2px solid #22c55e;color:#22c55e;font-size:14px;letter-spacing:6px;text-align:center;padding:8px;margin-bottom:8px">${typed.padEnd(len, "_")}</div>` +
+            `<div class="rw" style="justify-content:center;gap:6px">${nums}</div>`
+        })
       );
 
       document.querySelectorAll("#box .chip[data-n]").forEach((b) => {
@@ -504,33 +483,54 @@
           vib(8);
           if (typed === pin) {
             closeSheet();
-            toast("AKSES DITERIMA!", "g");
-            onComplete();
+            finish();
           } else if (typed.length >= len) {
             beep(150, 0.15);
-            vib(40);
+            vib(35);
             typed = "";
-            toast("KODE AKSES DITOLAK!", "b");
-            renderPad();
+            toast("KODE SANDI DITOLAK!", "b");
+            render();
           } else {
-            renderPad();
+            render();
           }
         };
       });
       $("tCancel").onclick = closeSheet;
     };
-    renderPad();
+    render();
+  }
+
+  /* ========================================================================
+     ENTRY POINT & FALLBACK GFX
+     ======================================================================== */
+  function getGfx() {
+    if (W.MS_TASK_GFX) return W.MS_TASK_GFX;
+    return {
+      PAL: { cyan: "#38bdf8", green: "#22c55e", amber: "#facc15", purple: "#a855f7" },
+      renderCrtShell: ({ title, subtitle, bodyHtml }) =>
+        `<h2>${title}</h2><p>${subtitle}</p>${bodyHtml}<button class="pb d" id="tCancel" style="margin-top:8px">BATAL</button>`,
+      drawPixelGrid: (ctx, w, h) => { ctx.fillStyle = "#050914"; ctx.fillRect(0, 0, w, h); },
+      drawPixelButton: (lbl, attrs, bg, fg) => `<button class="chip" ${attrs} style="background:${bg};color:${fg}">${lbl}</button>`,
+      spawnPixelSparks: () => {},
+      stepAndDrawSparks: () => {}
+    };
   }
 
   function openTaskModal(taskType, isTech, onComplete) {
-    cleanupActive();
-    const kind = resolveTaskKind(taskType);
-    if (kind === "wiring") return runWiringTask(isTech, onComplete);
-    if (kind === "frequency") return runFrequencyTask(isTech, onComplete);
-    if (kind === "biometric") return runBiometricTask(isTech, onComplete);
-    if (kind === "fuse") return runFuseTask(isTech, onComplete);
-    if (kind === "server") return runServerTask(isTech, onComplete);
-    return runKeypadTask(isTech, onComplete);
+    stopLoop();
+    const gfx = getGfx();
+    const kind = pickVariedKind(taskType);
+    const done = () => {
+      toast("TUGAS TERMINAL SELESAI!", "g");
+      if (typeof onComplete === "function") onComplete();
+    };
+
+    if (kind === "wiring") return playWiring(gfx, isTech, done);
+    if (kind === "frequency") return playFrequency(gfx, isTech, done);
+    if (kind === "biometric") return playBiometric(gfx, isTech, done);
+    if (kind === "fuse") return playFuse(gfx, isTech, done);
+    if (kind === "server") return playServer(gfx, isTech, done);
+    return playKeypad(gfx, isTech, done);
   }
 
   W.MS_TASKS = { openTaskModal };
