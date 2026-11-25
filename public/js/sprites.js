@@ -2,6 +2,9 @@
   "use strict";
   const { SKIN, HAIR, CLR, sh } = W.MS_CFG;
 
+  const CACHE = new Map();
+  const OUTLINE = "#12131f";
+
   function outline(c) {
     const x = c.getContext("2d"), w = c.width, h = c.height;
     const d = x.getImageData(0, 0, w, h), p = d.data, o = new Uint8ClampedArray(p);
@@ -13,7 +16,7 @@
         for (let j = 0; j < 4; j++) {
           const a = i + q[j][0], b = y + q[j][1];
           if (a >= 0 && b >= 0 && a < w && b < h && p[(b * w + a) * 4 + 3] > 0) {
-            o[k] = 34; o[k + 1] = 22; o[k + 2] = 44; o[k + 3] = 255;
+            o[k] = 24; o[k + 1] = 18; o[k + 2] = 36; o[k + 3] = 255;
             break;
           }
         }
@@ -23,189 +26,275 @@
     x.putImageData(d, 0, 0);
   }
 
-  function mkChar(a, dir, fr) {
+  function makeCanvas(w, h) {
     const c = document.createElement("canvas");
-    c.width = 20;
-    c.height = 30;
-    const X = c.getContext("2d");
-    X.translate(2, 4);
-    const r = (col, x, y, w, h) => { X.fillStyle = col; X.fillRect(x, y, w, h); };
+    c.width = w;
+    c.height = h;
+    const x = c.getContext("2d");
+    x.imageSmoothingEnabled = false;
+    return { c, x };
+  }
 
-    const sk = SKIN[a.skin] || SKIN[1];
-    const sd = sh(sk, -30);
-    const hc = HAIR[a.hairC] || HAIR[0];
-    const sc = CLR[a.shirtC] || CLR[0];
-    const bc = CLR[a.botC] || CLR[6];
-    const ac = CLR[(a.shirtC + 3) % CLR.length];
-    const S = dir > 1, B = dir === 1, hs = a.hair, E = "#2a1a2e";
+  function r(x, col, gx, gy, gw = 1, gh = 1) {
+    x.fillStyle = col;
+    x.fillRect(gx, gy, gw, gh);
+  }
 
-    if (dir === 3) { X.translate(16, 0); X.scale(-1, 1); }
-    const l1 = fr === 1 ? -1 : 0, l2 = fr === 2 ? -1 : 0;
-    const longPant = [0, 3, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15, 16, 17].includes(a.bot) && a.shirt !== 5 && a.shirt !== 13;
-    const lc = longPant ? bc : sk;
+  function normAvatar(raw) {
+    const a = raw || {};
+    return {
+      g: a.g || "m",
+      sk: a.sk ?? a.skin ?? 1,
+      hr: a.hr ?? a.hair ?? 0,
+      hc: a.hc ?? a.hairC ?? 0,
+      st: a.st ?? a.shirt ?? 0,
+      sc: a.sc ?? a.shirtC ?? 0,
+      pt: a.pt ?? a.bot ?? 0,
+      pc: a.pc ?? a.botC ?? 6,
+      ac: a.ac ?? a.acc ?? 0
+    };
+  }
 
-    // Rambut belakang
-    if (!S && !B && (hs === 1 || hs === 14)) r(hc, 3, 5, 10, 13);
-    if (S && (hs === 1 || hs === 14)) r(hc, 2, 5, 6, 13);
-    if (S && (hs === 2 || hs === 6 || hs === 11)) r(hc, 2, 5, 5, 6);
-    if (S && (hs === 5 || hs === 13)) r(hc, 1, 5, 3, 9);
-    if (S && (hs === 7 || hs === 15)) r(hc, 1, -1, 12, 11);
-    if (S && hs === 9) r(hc, 2, 5, 3, 6);
+  function buildChibiSprite(rawAv, dir, frame) {
+    const av = normAvatar(rawAv);
+    const { c, x } = makeCanvas(24, 36);
 
-    // Kaki & Sepatu
-    if (S) {
-      r(lc, 6, 19 + l1, 2, 4); r(lc, 8, 19 + l2, 2, 4);
-      r("#2a2438", 6, 23 + l1, 3, 2); r("#2a2438", 8, 23 + l2, 3, 2);
-    } else {
-      r(lc, 5, 19 + l1, 3, 4); r(lc, 8, 19 + l2, 3, 4);
-      r("#2a2438", 5, 23 + l1, 3, 2); r("#2a2438", 8, 23 + l2, 3, 2);
+    if (dir === 3) {
+      const rightCanvas = spr(av, 2, frame);
+      x.save();
+      x.translate(24, 0);
+      x.scale(-1, 1);
+      x.drawImage(rightCanvas, 0, 0);
+      x.restore();
+      return c;
     }
 
-    // Detail Bawahan
-    if (a.bot === 1 || a.bot === 8) { r(bc, S ? 4 : 3, 17, S ? 8 : 10, 3); r(sh(bc, -25), S ? 4 : 3, 19, S ? 8 : 10, 1); }
-    if (a.bot === 8 && !S) { r("#111", 5, 17, 1, 3); r("#111", 10, 17, 1, 3); r("#fff", 7, 18, 2, 1); }
-    if (a.bot === 2) { if (S) r(bc, 6, 18, 4, 3); else { r(bc, 5, 18, 3, 3); r(bc, 8, 18, 3, 3); } }
-    if (a.bot === 4) r(bc, S ? 5 : 4, 17, S ? 6 : 8, 2);
-    if (a.bot === 3) { r(sh(bc, -35), S ? 7 : 5, 20, 2, 2); r(sh(bc, -35), 9, 20, S ? 0 : 2, 2); }
-    if (a.bot === 7 && !S) { r(sk, 6, 20 + l1, 1, 1); r(sk, 9, 21 + l2, 1, 1); }
-    if (a.bot === 9 && !S) { r("#111", 6, 19, 1, 4); r("#111", 9, 19, 1, 4); }
-    if (a.bot === 10) { r("#fff", S ? 6 : 5, 22 + l1, S ? 4 : 6, 1); }
-    if (a.bot === 15 && !S) { r(bc, 5, 14, 1, 4); r(bc, 10, 14, 1, 4); r(bc, 5, 16, 6, 2); }
+    const skinBase = SKIN[av.sk] || SKIN[1] || "#f8d5c2";
+    const skinShadow = sh(skinBase, -26);
+    const skinBlush = "#f9a8d4";
 
-    // Dress / Gaun panjang
-    if (a.shirt === 5 || a.shirt === 13) {
-      const dcol = a.shirt === 13 ? "#d92b3a" : sc;
-      r(dcol, S ? 4 : 3, 17, S ? 8 : 10, 5);
-      r(a.shirt === 13 ? "#fff" : sh(dcol, -25), S ? 4 : 3, 21, S ? 8 : 10, 1);
+    const hairBase = HAIR[av.hc] || HAIR[0] || "#3b3534";
+    const hairDark = sh(hairBase, -26);
+    const hairLight = sh(hairBase, 24);
+
+    const topBase = CLR[av.sc] || CLR[0] || "#1e293b";
+    const topDark = sh(topBase, -28);
+    const topLight = sh(topBase, 24);
+
+    const botBase = CLR[av.pc] || CLR[6] || "#334155";
+    const botDark = sh(botBase, -26);
+    const botLight = sh(botBase, 24);
+
+    const bob = frame === 0 ? 0 : -1;
+    const stepL = frame === 1 ? -1 : frame === 2 ? 1 : 0;
+    const stepR = frame === 1 ? 1 : frame === 2 ? -1 : 0;
+    const isSide = dir === 2;
+    const isBack = dir === 1;
+
+    // 1. Bayangan lantai
+    x.fillStyle = "rgba(5, 8, 20, 0.42)";
+    x.fillRect(6, 33, 12, 2);
+
+    // 2. Celana & Sepatu (y: 25..34)
+    if (!isSide) {
+      r(x, OUTLINE, 7, 25, 4, 8 + stepL);
+      r(x, OUTLINE, 13, 25, 4, 8 + stepR);
+      r(x, botBase, 8, 25, 3, 5 + stepL);
+      r(x, botBase, 13, 25, 3, 5 + stepR);
+      r(x, botLight, 8, 26, 2, 2);
+      r(x, botLight, 14, 26, 2, 2);
+
+      r(x, "#18181b", 7, 30 + stepL, 4, 3);
+      r(x, "#18181b", 13, 30 + stepR, 4, 3);
+      r(x, "#3f3f46", 8, 30 + stepL, 2, 1);
+      r(x, "#3f3f46", 14, 30 + stepR, 2, 1);
+    } else {
+      r(x, OUTLINE, 9, 25, 6, 8);
+      r(x, botBase, 10 + stepL, 25, 4, 5);
+      r(x, botDark, 10 + stepR, 25, 4, 5);
+      r(x, "#18181b", 9 + stepL, 30, 5, 3);
+      r(x, "#27272a", 9 + stepR, 30, 5, 3);
     }
 
-    // Badan & Baju (Casual, Natal, Punk)
-    const bx = S ? 5 : 4, bw = S ? 6 : 8;
-    let bodyCol = sc;
-    if (a.shirt === 9) bodyCol = "#c92a38";
-    if (a.shirt === 10 || a.shirt === 11) bodyCol = "#1e1d26";
-    if (a.shirt === 12 || a.shirt === 13) bodyCol = "#d92b3a";
-    if (a.shirt === 16) bodyCol = "#2e8b4e";
-    r(bodyCol, bx, 12, bw, 6);
+    // 3. Badan / Jaket (y: 18..26 + bob)
+    const by = 18 + bob;
+    if (!isSide) {
+      r(x, OUTLINE, 6, by, 12, 8);
+      r(x, OUTLINE, 4, by + 1, 2, 6);
+      r(x, OUTLINE, 18, by + 1, 2, 6);
 
-    if (S) {
-      r(a.shirt === 2 ? sk : bodyCol, 7, 13, 2, a.shirt === 2 ? 5 : 4);
-    } else {
-      if ([0, 6, 8, 11].includes(a.shirt)) {
-        r(bodyCol, 3, 13, 1, 2); r(bodyCol, 12, 13, 1, 2);
-        r(sk, 3, 15, 1, 3); r(sk, 12, 15, 1, 3);
-      } else if ([2, 5, 13].includes(a.shirt)) {
-        r(sk, 3, 13, 1, 5); r(sk, 12, 13, 1, 5);
+      r(x, topBase, 7, by + 1, 10, 6);
+      r(x, topDark, 7, by + 1, 2, 6);
+      r(x, topDark, 15, by + 1, 2, 6);
+
+      r(x, topBase, 5, by + 1, 2, 4);
+      r(x, topBase, 17, by + 1, 2, 4);
+      r(x, topDark, 5, by + 5, 2, 1);
+      r(x, topDark, 17, by + 5, 2, 1);
+      r(x, skinBase, 5, by + 6, 2, 2);
+      r(x, skinBase, 17, by + 6, 2, 2);
+
+      if (!isBack) {
+        r(x, "#18181b", 11, by + 1, 2, 6);
+        r(x, skinBase, 11, by, 2, 1);
+        if (av.st % 2 === 0) {
+          r(x, topLight, 8, by + 3, 2, 1);
+          r(x, topLight, 14, by + 3, 2, 1);
+          r(x, "#e2e8f0", 11, by + 2, 1, 1);
+          r(x, "#e2e8f0", 11, by + 4, 1, 1);
+          r(x, "#e2e8f0", 11, by + 6, 1, 1);
+        } else {
+          r(x, topLight, 8, by + 2, 8, 2);
+          r(x, topDark, 9, by + 5, 6, 2);
+        }
       } else {
-        r(bodyCol, 3, 13, 1, 5); r(bodyCol, 12, 13, 1, 5);
+        r(x, topLight, 8, by + 2, 8, 1);
+      }
+    } else {
+      r(x, OUTLINE, 8, by, 8, 8);
+      r(x, topBase, 9, by + 1, 6, 6);
+      r(x, topLight, 10, by + 2, 3, 4);
+      r(x, skinBase, 10 + stepR, by + 6, 3, 2);
+    }
+
+    // 4. Kepala Chibi (y: 3..18 + bob)
+    const hy = 3 + bob;
+    r(x, OUTLINE, 6, hy, 12, 1);
+    r(x, OUTLINE, 5, hy + 1, 14, 1);
+    r(x, OUTLINE, 4, hy + 2, 16, 11);
+    r(x, OUTLINE, 5, hy + 13, 14, 1);
+    r(x, OUTLINE, 7, hy + 14, 10, 1);
+
+    r(x, skinBase, 5, hy + 3, 14, 10);
+    r(x, skinBase, 7, hy + 13, 10, 1);
+    r(x, skinShadow, 5, hy + 11, 2, 2);
+    r(x, skinShadow, 17, hy + 11, 2, 2);
+    r(x, skinShadow, 8, hy + 13, 8, 1);
+
+    // 5. Wajah & Ekspresi
+    if (!isBack) {
+      if (!isSide) {
+        r(x, hairDark, 7, hy + 7, 3, 1);
+        r(x, hairDark, 14, hy + 7, 3, 1);
+
+        r(x, "#18181b", 7, hy + 8, 3, 3);
+        r(x, "#18181b", 14, hy + 8, 3, 3);
+        r(x, "#334155", 8, hy + 9, 2, 2);
+        r(x, "#334155", 15, hy + 9, 2, 2);
+        r(x, "#ffffff", 7, hy + 8, 1, 1);
+        r(x, "#ffffff", 14, hy + 8, 1, 1);
+
+        r(x, skinBlush, 6, hy + 11, 2, 1);
+        r(x, skinBlush, 16, hy + 11, 2, 1);
+        r(x, "#f472b6", 11, hy + 12, 2, 1);
+
+        // Kacamata bingkai kotak (acc 1, 4, atau 10)
+        if (av.ac === 1 || av.ac === 4 || av.ac === 10) {
+          r(x, "#090d16", 6, hy + 8, 5, 1);
+          r(x, "#090d16", 6, hy + 11, 5, 1);
+          r(x, "#090d16", 6, hy + 8, 1, 4);
+          r(x, "#090d16", 10, hy + 8, 1, 4);
+
+          r(x, "#090d16", 13, hy + 8, 5, 1);
+          r(x, "#090d16", 13, hy + 11, 5, 1);
+          r(x, "#090d16", 13, hy + 8, 1, 4);
+          r(x, "#090d16", 17, hy + 8, 1, 4);
+          r(x, "#090d16", 11, hy + 9, 2, 1);
+        } else if (av.ac === 5) {
+          r(x, "#1e293b", 7, hy + 10, 10, 4);
+          r(x, "#334155", 8, hy + 11, 8, 2);
+        }
+      } else {
+        r(x, hairDark, 14, hy + 7, 3, 1);
+        r(x, "#18181b", 14, hy + 8, 3, 3);
+        r(x, "#ffffff", 14, hy + 8, 1, 1);
+        r(x, skinBlush, 13, hy + 11, 2, 1);
+        if (av.ac === 1 || av.ac === 4 || av.ac === 10) {
+          r(x, "#090d16", 13, hy + 8, 5, 1);
+          r(x, "#090d16", 13, hy + 11, 5, 1);
+          r(x, "#090d16", 13, hy + 8, 1, 4);
+          r(x, "#090d16", 18, hy + 8, 1, 4);
+        }
       }
     }
 
-    // Motif Khusus Baju
-    if (a.shirt === 3) { r(sh(sc, -25), bx, 11, bw, 2); }
-    if (a.shirt === 4 && !S) { r("#fff", 6, 12, 4, 1); r(sh(sc, -35), 7, 13, 1, 5); }
-    if (a.shirt === 7) { r("#fff", bx, 14, bw, 1); r("#fff", bx, 16, bw, 1); }
-    if (a.shirt === 8) { for (let q = 12; q < 18; q += 2) r(sh(sc, -45), bx, q, bw, 1); }
-    if (a.shirt === 9 && !S) { r("#2e8b4e", 5, 14, 6, 2); r("#fff", 6, 13, 1, 1); r("#fff", 9, 13, 1, 1); r("#ffd23f", 7, 14, 2, 2); }
-    if (a.shirt === 10 && !S) { r("#aeb7c7", 5, 12, 1, 1); r("#aeb7c7", 10, 12, 1, 1); r("#aeb7c7", 6, 14, 4, 1); r("#d92b3a", 7, 15, 2, 2); }
-    if (a.shirt === 11 && !S) { r("#fff", 7, 13, 2, 2); r("#ff5d6c", 6, 15, 4, 1); }
-    if (a.shirt === 12) { r("#fff", 7, 12, 2, 5); r("#111", bx, 16, bw, 1); r("#ffd23f", 7, 16, 2, 1); }
-    if (a.shirt === 13 && !S) { r("#fff", 6, 12, 4, 1); r("#111", bx, 15, bw, 1); }
-    if (a.shirt === 15 && !S) { r("#3b6ab8", 4, 12, 2, 6); r("#3b6ab8", 10, 12, 2, 6); r("#fff", 6, 12, 4, 6); }
-    if (a.shirt === 16 && !S) { r("#d92b3a", 5, 12, 6, 1); r("#ffd23f", 7, 14, 2, 2); }
-    if (a.shirt === 17 && !S) { r("#fff", 7, 12, 2, 3); r("#d92b3a", 7, 13, 2, 2); }
+    // 6. Rambut 3-Tone
+    r(x, hairBase, 6, hy + 1, 12, 4);
+    r(x, hairBase, 5, hy + 2, 14, 4);
+    r(x, hairLight, 7, hy + 2, 4, 1);
+    r(x, hairLight, 13, hy + 2, 4, 1);
 
-    // Kepala & Wajah
-    if (S) {
-      r(sk, 4, 2, 8, 9); r(sk, 12, 6, 1, 2);
-      r(E, 9, 6, 2, 3); r("#fff", 9, 6, 1, 1); r("#b5535e", 10, 9, 1, 1);
-    } else {
-      r(sk, 4, 2, 8, 9); r(sk, 3, 3, 10, 7); r(sd, 4, 10, 8, 1);
-      if (!B) {
-        r(E, 5, 6, 2, 3); r(E, 9, 6, 2, 3);
-        r("#fff", 5, 6, 1, 1); r("#fff", 9, 6, 1, 1);
-        r("#b5535e", 7, 9, 2, 1);
+    if (isBack) {
+      r(x, hairBase, 5, hy + 3, 14, 9);
+      r(x, hairDark, 6, hy + 10, 12, 2);
+      r(x, hairLight, 8, hy + 4, 8, 1);
+    } else if (!isSide) {
+      r(x, hairBase, 5, hy + 5, 2, 5);
+      r(x, hairBase, 17, hy + 5, 2, 5);
+      r(x, hairDark, 5, hy + 8, 1, 2);
+      r(x, hairDark, 18, hy + 8, 1, 2);
+
+      const style = av.hr % 4;
+      if (style === 0) {
+        r(x, hairBase, 7, hy + 5, 4, 2);
+        r(x, hairBase, 13, hy + 5, 4, 2);
+        r(x, hairDark, 9, hy + 6, 2, 2);
+        r(x, hairDark, 13, hy + 6, 2, 2);
+      } else if (style === 1) {
+        r(x, hairBase, 7, hy + 5, 10, 2);
+        r(x, hairDark, 8, hy + 6, 8, 1);
+      } else if (style === 2) {
+        r(x, hairBase, 7, hy + 5, 8, 2);
+        r(x, hairDark, 7, hy + 6, 5, 2);
+      } else {
+        r(x, hairBase, 7, hy + 5, 4, 2);
+        r(x, hairBase, 13, hy + 5, 4, 2);
+        r(x, hairDark, 4, hy + 9, 2, 9);
+        r(x, hairDark, 18, hy + 9, 2, 9);
       }
-    }
-
-    // Rambut Depan
-    if (B) {
-      r(hc, 3, 1, 10, 10); r(hc, 4, 0, 8, 1);
-      if (hs === 1) r(hc, 2, 5, 12, 13);
-      if (hs === 10 || hs === 16) r(sk, 3, 3, 10, 8);
-    } else if (S) {
-      r(hc, 3, 1, 9, 4); r(hc, 4, 0, 7, 1); r(hc, 9, 5, 3, 1); r(hc, 3, 5, 3, 4);
-      if (hs === 10 || hs === 16) { r(sk, 4, 3, 8, 2); r(sk, 4, 5, 2, 4); }
     } else {
-      r(hc, 3, 1, 10, 4); r(hc, 4, 0, 8, 1);
-      r(hc, 3, 5, 2, 3); r(hc, 11, 5, 2, 3);
-      if (hs === 1) { r(hc, 2, 8, 2, 9); r(hc, 12, 8, 2, 9); }
-      if (hs === 2 || hs === 6 || hs === 11) { r(hc, 2, 5, 3, 6); r(hc, 11, 5, 3, 6); }
-      if (hs === 5) { r(hc, 12, 4, 3, 3); r(hc, 13, 7, 2, 6); }
-      if (hs === 7 || hs === 15) { r(hc, 1, 0, 14, 6); r(hc, 1, 5, 3, 5); r(hc, 12, 5, 3, 5); }
-      if (hs === 8) { r(hc, 4, 5, 3, 2); r(hc, 9, 5, 3, 2); }
-      if (hs === 9) { r(hc, 0, 5, 3, 7); r(hc, 13, 5, 3, 7); }
-      if (hs === 10 || hs === 16) { r(sk, 3, 3, 10, 3); r(hc, 4, 2, 8, 2); }
-      if (hs === 14) { r(hc, 2, 6, 2, 10); r(hc, 12, 6, 2, 10); r("#ff7a8a", 2, 14, 2, 1); r("#ff7a8a", 12, 14, 2, 1); }
+      r(x, hairBase, 5, hy + 3, 9, 8);
+      r(x, hairBase, 14, hy + 5, 4, 2);
+      r(x, hairDark, 5, hy + 9, 7, 2);
     }
-    if (hs === 3) { r(hc, 4, -1, 2, 2); r(hc, 7, -2, 2, 3); r(hc, 10, -1, 2, 2); }
-    if (hs === 4) r(hc, 6, -2, 4, 3);
-    if (hs === 12) { r("#ff5d6c", 7, -3, 2, 4); r("#ffd23f", 7, -4, 2, 1); }
-    if (hs === 17) { r(hc, 5, -2, 6, 3); }
 
-    // Aksesori (18 Varian termasuk Natal & Punk)
-    const G = "#222";
-    if (a.acc === 1 && !B) {
-      if (S) { r(G, 8, 5, 4, 1); r(G, 8, 9, 3, 1); r(G, 8, 6, 1, 3); }
-      else { r(G, 4, 5, 8, 1); r(G, 4, 9, 3, 1); r(G, 9, 9, 3, 1); r(G, 4, 6, 1, 3); r(G, 11, 6, 1, 3); }
+    // 7. Aksesori Kepala (Mahkota / Topi / Tanduk)
+    if (av.ac === 16 || av.ac === 2) {
+      r(x, "#facc15", 8, hy - 1, 8, 2);
+      r(x, "#ef4444", 11, hy - 1, 2, 1);
+    } else if (av.ac === 12 || av.ac === 3) {
+      r(x, "#ef4444", 6, hy + 1, 12, 2);
+      r(x, "#ffffff", 11, hy, 2, 1);
     }
-    if (a.acc === 2) { r(ac, 3, 0, S ? 9 : 10, 4); if (!B) r(sh(ac, -35), S ? 10 : 2, 4, S ? 5 : 12, 1); }
-    if (a.acc === 3) { r(CLR[2], S ? 4 : 10, 0, 3, 3); }
-    if (a.acc === 4) { r("#333", 3, 0, S ? 8 : 10, 1); if (!S) { r(CLR[2], 1, 5, 2, 4); r(CLR[2], 13, 5, 2, 4); } }
-    if (a.acc === 5 && !B) { r("#f4f4f4", S ? 8 : 4, 8, S ? 5 : 8, 3); }
-    if (a.acc === 6) { r(ac, 3, 0, S ? 9 : 10, 4); r("#fff", 6, -1, 3, 1); }
-    if (a.acc === 7) { r(CLR[2], 3, 2, S ? 9 : 10, 2); }
-    if (a.acc === 8) { r("#ffd23f", S ? 7 : 3, 9, 1, 2); if (!S) r("#ffd23f", 12, 9, 1, 2); }
-    if (a.acc === 9) { r("#d92b3a", S ? 5 : 4, 11, S ? 6 : 8, 2); r("#2e8b4e", S ? 6 : 5, 11, 2, 2); if (!B && !S) r("#d92b3a", 5, 13, 2, 4); }
-    if (a.acc === 10 && !B) { r("#111", 4, 5, 3, 3); r("#111", 9, 5, 3, 3); r("#111", 7, 5, 2, 1); }
-    if (a.acc === 11) { r("#ff7a8a", S ? 5 : 10, 2, 2, 2); r("#ffd23f", S ? 5 : 10, 2, 1, 1); }
-    if (a.acc === 12) { r("#d92b3a", 4, -2, 8, 3); r("#fff", 3, 1, 10, 2); r("#fff", 11, -2, 2, 2); }
-    if (a.acc === 13) { r("#8b5a2b", 4, -3, 1, 4); r("#8b5a2b", 3, -2, 3, 1); r("#8b5a2b", 11, -3, 1, 4); r("#8b5a2b", 10, -2, 3, 1); }
-    if (a.acc === 14 && !B) { r("#111", S ? 5 : 4, 11, S ? 6 : 8, 1); r("#d8dce6", S ? 6 : 5, 11, 1, 1); r("#d8dce6", S ? 8 : 8, 11, 1, 1); r("#d8dce6", 7, 13, 2, 2); }
-    if (a.acc === 15 && !B) { r("#5cc8ff", 4, 2, 3, 2); r("#5cc8ff", 9, 2, 3, 2); r("#333", 3, 2, 10, 1); }
-    if (a.acc === 16) { r("#ffd23f", 5, -2, 6, 2); r("#ffd23f", 5, -3, 1, 1); r("#ffd23f", 8, -3, 1, 1); r("#ffd23f", 10, -3, 1, 1); }
-    if (a.acc === 17) { r("#2e8b4e", 3, 0, 10, 4); r("#d92b3a", 3, 3, 10, 1); r("#fff", 6, -2, 3, 2); }
 
-    outline(c);
     return c;
   }
 
-  function spr(a, dir, fr) {
-    if (!a.sp) a.sp = {};
-    const k = `${dir}_${fr}`;
-    return a.sp[k] || (a.sp[k] = mkChar(a, dir, fr));
+  function spr(av, dir = 0, fr = 0) {
+    const pv = document.getElementById("pv");
+    if (pv && (pv.width !== 24 || pv.height !== 36)) {
+      pv.width = 24;
+      pv.height = 36;
+    }
+    const n = normAvatar(av);
+    const key = `${n.g}_${n.sk}_${n.hr}_${n.hc}_${n.st}_${n.sc}_${n.pt}_${n.pc}_${n.ac}_${dir}_${fr}`;
+    let sp = CACHE.get(key);
+    if (!sp) {
+      sp = buildChibiSprite(n, dir, fr);
+      CACHE.set(key, sp);
+    }
+    return sp;
   }
 
-  /* ---------- Props Resolusi Tinggi (HD Pixel) ---------- */
-  const PD = {
-    cone: [20, 22],
-    galon: [22, 32],
-    pot: [24, 26],
-    drum: [24, 30],
-    speaker: [26, 32],
-    palet: [34, 24]
-  };
-  const PN = {
-    cone: "Cone Parkir",
-    galon: "Dispenser Air",
-    pot: "Pot Tanaman",
-    drum: "Tong Besi",
-    speaker: "Mesin Printer",
-    palet: "Sofa Kantor"
-  };
+  /* ---------- Props Bawaan untuk Kompatibilitas world.js ---------- */
+  const PD = { cone: [20, 22], galon: [22, 32], pot: [24, 26], drum: [24, 30], speaker: [26, 32], palet: [34, 24] };
+  const PN = { cone: "Cone Parkir", galon: "Dispenser Air", pot: "Pot Tanaman", drum: "Tong Besi", speaker: "Mesin Printer", palet: "Sofa Kantor" };
   const PC = {};
 
   function prop(t) {
+    if (W.MS_PROP_ART && W.MS_PROP_ART.buildPropSprite) {
+      return W.MS_PROP_ART.buildPropSprite(t);
+    }
     if (PC[t]) return PC[t];
     const D = PD[t] || PD.cone;
     const c = document.createElement("canvas");
@@ -213,85 +302,8 @@
     c.height = D[1] + 2;
     const X = c.getContext("2d");
     X.translate(1, 1);
-    const r = (col, x, y, w, h) => { X.fillStyle = col; X.fillRect(x, y, w, h); };
-
-    if (t === "cone") {
-      r("#d9531e", 8, 1, 4, 3);
-      r("#ff7a1a", 7, 4, 6, 4);
-      r("#ffffff", 6, 8, 8, 3);
-      r("#d8e2f0", 11, 8, 3, 3);
-      r("#ff7a1a", 5, 11, 10, 4);
-      r("#d9531e", 11, 11, 4, 4);
-      r("#ffffff", 4, 15, 12, 3);
-      r("#2b2d3c", 2, 18, 16, 4);
-      r("#45485e", 3, 18, 10, 2);
-    }
-    if (t === "galon") {
-      r("#1d4ed8", 8, 0, 6, 2);
-      r("#93c5fd", 6, 2, 10, 2);
-      r("#3b82f6", 5, 4, 12, 11);
-      r("#60a5fa", 6, 5, 4, 9);
-      r("#dbeafe", 7, 6, 2, 7);
-      r("#2563eb", 5, 9, 12, 1);
-      r("#e2e8f0", 4, 15, 14, 16);
-      r("#cbd5e1", 13, 15, 5, 16);
-      r("#334155", 6, 18, 10, 6);
-      r("#ef4444", 7, 20, 2, 3);
-      r("#3b82f6", 13, 20, 2, 3);
-      r("#1e293b", 4, 30, 14, 2);
-    }
-    if (t === "pot") {
-      r("#15803d", 9, 1, 6, 6);
-      r("#22c55e", 5, 4, 14, 7);
-      r("#4ade80", 7, 5, 5, 4);
-      r("#166534", 13, 5, 6, 6);
-      r("#15803d", 8, 9, 8, 4);
-      r("#ea580c", 4, 13, 16, 3);
-      r("#fb923c", 5, 13, 8, 2);
-      r("#c2410c", 6, 16, 12, 9);
-      r("#9a3412", 13, 16, 5, 9);
-      r("#451a03", 7, 25, 10, 1);
-    }
-    if (t === "drum") {
-      r("#475569", 3, 2, 18, 26);
-      r("#64748b", 4, 3, 8, 24);
-      r("#94a3b8", 6, 4, 3, 22);
-      r("#1e293b", 2, 1, 20, 3);
-      r("#cbd5e1", 3, 1, 10, 1);
-      r("#1e293b", 2, 10, 20, 2);
-      r("#1e293b", 2, 20, 20, 2);
-      r("#1e293b", 2, 27, 20, 3);
-      r("#facc15", 10, 14, 4, 4);
-    }
-    if (t === "speaker") {
-      r("#f8fafc", 6, 1, 14, 7);
-      r("#cbd5e1", 8, 3, 10, 1);
-      r("#cbd5e1", 8, 5, 8, 1);
-      r("#e2e8f0", 2, 8, 22, 22);
-      r("#94a3b8", 18, 8, 6, 22);
-      r("#cbd5e1", 2, 8, 22, 4);
-      r("#0f172a", 4, 14, 12, 5);
-      r("#38bdf8", 5, 15, 6, 3);
-      r("#22c55e", 13, 15, 2, 1);
-      r("#ef4444", 13, 17, 2, 1);
-      r("#64748b", 4, 21, 16, 7);
-      r("#334155", 9, 23, 6, 2);
-      r("#1e293b", 3, 30, 20, 2);
-    }
-    if (t === "palet") {
-      r("#1e3a8a", 2, 1, 30, 9);
-      r("#2563eb", 3, 2, 28, 7);
-      r("#3b82f6", 5, 3, 11, 5);
-      r("#3b82f6", 18, 3, 11, 5);
-      r("#1d4ed8", 0, 8, 34, 12);
-      r("#60a5fa", 4, 9, 12, 6);
-      r("#60a5fa", 18, 9, 12, 6);
-      r("#1e3a8a", 0, 8, 4, 12);
-      r("#1e3a8a", 30, 8, 4, 12);
-      r("#451a03", 3, 20, 3, 4);
-      r("#451a03", 28, 20, 3, 4);
-    }
-
+    r(X, "#ff7a1a", 6, 4, 8, 14);
+    r(X, "#2b2d3c", 2, 18, 16, 4);
     outline(c);
     return (PC[t] = c);
   }
