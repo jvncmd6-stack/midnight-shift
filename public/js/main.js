@@ -1,6 +1,6 @@
 (function (W) {
   "use strict";
-  const { $, rnd, cl, vib, tgw, getUN, CFG, ME, T, MW, MH, toast } = W.MS_CFG;
+  const { $, rnd, cl, vib, tgw, getUN, CFG, ME, T, MW, MH, toast, closeSheet } = W.MS_CFG;
   const { wc, lc, LW, LH, BULBS, lobbyBlocked, drawSky, stepStreetTraffic, renderStreetLayer, renderStreetLights } = W.MS_WORLD;
   const { openTaskModal } = W.MS_TASKS;
   const { audioOn, MU } = W.MS_AUDIO;
@@ -47,12 +47,26 @@
   resize();
 
   function show(id) {
+    closeSheet();
     ["splash", "creator", "lobby", "hud"].forEach((s) => $(s).classList.toggle("hide", s !== id));
     scene = id;
     document.body.className = id;
     cam.on = 0;
     MU.mode = id;
     MU.force = 1;
+
+    // Pindahkan joystick agar tetap muncul dan bisa digerakkan di lobi maupun saat bermain
+    const stickEl = $("stick");
+    if (stickEl) {
+      if (id === "lobby") {
+        document.body.appendChild(stickEl);
+        stickEl.style.zIndex = "30";
+      } else if (id === "hud") {
+        $("hud").appendChild(stickEl);
+        stickEl.style.zIndex = "";
+      }
+    }
+
     if (id !== "hud" && W.MS_ESCAPE_FX) W.MS_ESCAPE_FX.ensureControls(false);
   }
 
@@ -88,6 +102,7 @@
   $("e3").onclick = () => { LM.em = 3; LM.et = 0; vib(10); };
 
   function onRoomUpdated(room) {
+    closeSheet();
     if (scene !== "lobby") show("lobby");
     $("lCode").textContent = `ROOM #${room.code}`;
     $("lMode").textContent = `${room.mode} · ${room.phase}`;
@@ -174,6 +189,7 @@
       drawSky(ctx, VW, VH, tclock);
       if (scene === "creator") {
         const pcv = $("pv").getContext("2d");
+        pcv.imageSmoothingEnabled = false;
         const sp = W.MS_SPR.spr(ME, pdir, [0, 1, 0, 2][Math.floor(tclock * 4) % 4]);
         pcv.clearRect(0, 0, pcv.width, pcv.height);
         pcv.drawImage(sp, 0, 0);
@@ -181,7 +197,10 @@
       return;
     }
 
-    const modalOpen = !$("sheet").classList.contains("hide");
+    const sheetEl = $("sheet");
+    const setEl = $("set");
+    const modalOpen = (sheetEl && !sheetEl.classList.contains("hide") && sheetEl.offsetParent !== null) ||
+                      (setEl && !setEl.classList.contains("hide") && setEl.offsetParent !== null);
     const ix = modalOpen ? 0 : cl(jx + (keys.d ? 1 : 0) - (keys.a ? 1 : 0), -1, 1);
     const iy = modalOpen ? 0 : cl(jy + (keys.s ? 1 : 0) - (keys.w ? 1 : 0), -1, 1);
 
