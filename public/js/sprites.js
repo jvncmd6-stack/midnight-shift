@@ -258,13 +258,19 @@
       r(x, hairDark, 5, hy + 9, 7, 2);
     }
 
-    // 7. Aksesori Kepala (Mahkota / Topi / Tanduk)
+    // 7. Aksesori Kepala dengan Outline Utuh (tidak terpotong/bertumpuk)
     if (av.ac === 16 || av.ac === 2) {
+      r(x, OUTLINE, 7, hy - 3, 10, 4);
       r(x, "#facc15", 8, hy - 1, 8, 2);
+      r(x, "#facc15", 8, hy - 2, 2, 1);
+      r(x, "#facc15", 11, hy - 2, 2, 1);
+      r(x, "#facc15", 14, hy - 2, 2, 1);
       r(x, "#ef4444", 11, hy - 1, 2, 1);
     } else if (av.ac === 12 || av.ac === 3) {
-      r(x, "#ef4444", 6, hy + 1, 12, 2);
-      r(x, "#ffffff", 11, hy, 2, 1);
+      r(x, OUTLINE, 5, hy - 2, 14, 4);
+      r(x, "#ef4444", 6, hy - 1, 12, 2);
+      r(x, "#ffffff", 6, hy + 1, 12, 1);
+      r(x, "#ffffff", 16, hy - 1, 2, 2);
     }
 
     return c;
