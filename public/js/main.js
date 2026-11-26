@@ -8,12 +8,12 @@
 
   // Muat modul tambahan secara otomatis
   [
-    "/js/emotePro.js",
-    "/js/propArt.js",
-    "/js/hudMeeting.js",
-    "/js/lobbyUi.js",
-    "/js/escapeFx.js",
-    "/js/roleFx.js"
+    "/js/emotePro.js?v=3",
+    "/js/propArt.js?v=3",
+    "/js/hudMeeting.js?v=3",
+    "/js/lobbyUi.js?v=3",
+    "/js/escapeFx.js?v=3",
+    "/js/roleFx.js?v=3"
   ].forEach((src) => {
     if (!document.querySelector(`script[src="${src}"]`)) {
       const s = document.createElement("script");
@@ -54,19 +54,6 @@
     cam.on = 0;
     MU.mode = id;
     MU.force = 1;
-
-    // Pindahkan joystick agar tetap muncul dan bisa digerakkan di lobi maupun saat bermain
-    const stickEl = $("stick");
-    if (stickEl) {
-      if (id === "lobby") {
-        document.body.appendChild(stickEl);
-        stickEl.style.zIndex = "30";
-      } else if (id === "hud") {
-        $("hud").appendChild(stickEl);
-        stickEl.style.zIndex = "";
-      }
-    }
-
     if (id !== "hud" && W.MS_ESCAPE_FX) W.MS_ESCAPE_FX.ensureControls(false);
   }
 
