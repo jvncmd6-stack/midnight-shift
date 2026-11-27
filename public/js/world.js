@@ -11,18 +11,17 @@
     ["Aula Rapat", 38, 2, 24, 16, "#403157", "#4a3963"]
   ];
 
-  // Koordinat Solid dalam Gedung: [x, y, w, h, tipe]
   const SOL = [
-    [41, 2, 18, 3, "s"], // Meja Konferensi Aula
-    [36, 29, 5, 2, "k"], // Meja Kasir Kafetaria
-    [44, 29, 5, 2, "k"], // Meja Dapur Kafetaria
-    [16, 29, 4, 2, "g"], // Rak Server 1
-    [23, 29, 4, 2, "g"], // Rak Server 2
-    [5, 6, 4, 2, "j"],   // Meja Kerja 1
-    [14, 11, 4, 2, "j"], // Meja Kerja 2
-    [9, 14, 4, 2, "j"],  // Meja Kerja 3
-    [19, 5, 3, 2, "j"],  // Meja Kerja 4
-    [2, 34, 6, 2, "b"]   // Meja Resepsionis Lobi
+    [41, 2, 18, 3, "s"],
+    [36, 29, 5, 2, "k"],
+    [44, 29, 5, 2, "k"],
+    [16, 29, 4, 2, "g"],
+    [23, 29, 4, 2, "g"],
+    [5, 6, 4, 2, "j"],
+    [14, 11, 4, 2, "j"],
+    [9, 14, 4, 2, "j"],
+    [19, 5, 3, 2, "j"],
+    [2, 34, 6, 2, "b"]
   ];
 
   const BULBS = [];
@@ -53,7 +52,7 @@
   }
 
   /* ==========================================================================
-     1. INDOOR BUILDING MAP (PIXEL ART PRO RENDERER)
+     1. INDOOR BUILDING MAP
      ========================================================================== */
   const wc = document.createElement("canvas");
   wc.width = MW * T;
@@ -65,12 +64,10 @@
     let seed = 11;
     const sr = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
 
-    // Lantai Utama Gedung dengan Bevel Ubin & Tekstur
     for (let y = 0; y < MH; y++) {
       for (let x = 0; x < MW; x++) {
         const base = (x + y) % 2 ? "#323c59" : "#374261";
         wr(base, x * T, y * T, T, T);
-        // Nat ubin & highlight tipis
         wr("#242c42", x * T, y * T, T, 1);
         wr("#242c42", x * T, y * T, 1, T);
         wr("rgba(255,255,255,0.04)", x * T + 1, y * T + 1, T - 1, 1);
@@ -80,7 +77,6 @@
       }
     }
 
-    // Lantai Tiap Ruangan dengan Border & Bayangan Dinding
     ZN.forEach((z) => {
       for (let y = z[2]; y < z[2] + z[4]; y++) {
         for (let x = z[1]; x < z[1] + z[3]; x++) {
@@ -99,7 +95,6 @@
       wr("rgba(0,0,0,0.35)", zx, zy + zh - 3, zw, 3);
     });
 
-    // Karpet Merah/Ungu Koridor Tengah + Bordir Emas + Pedestal Tombol Rapat
     wr("#362952", 2 * T, 21 * T, 60 * T, 2 * T);
     wr("#291f40", 2 * T, 21 * T + 3, 60 * T, 2 * T - 6);
     wr("#e6bd37", 2 * T, 21 * T, 60 * T, 1);
@@ -110,13 +105,11 @@
       wr("#e6bd37", x + 10, 22 * T - 1, 4, 2);
     }
 
-    // Pedestal Tengah (Tempat Tombol Rapat Darurat)
     blobOn(wx, "rgba(0,0,0,0.45)", 32 * T, 22 * T + 5, 26, 10);
     blobOn(wx, "#2e244a", 32 * T, 22 * T + 4, 24, 9);
     blobOn(wx, "#4e407a", 32 * T, 22 * T + 3, 19, 7);
     blobOn(wx, "#6c5ba3", 32 * T, 22 * T + 2, 14, 5);
 
-    // Pilar Koridor & Bayangannya
     GL.forEach((g) => {
       const px = g[0] * T, py = g[1] * T;
       blobOn(wx, "rgba(0,0,0,0.4)", px, py, 6, 3);
@@ -126,7 +119,6 @@
       wr("#ffd23f", px - 1, py - 10, 2, 3);
     });
 
-    // Dinding Keliling Gedung + Jendela Kaca Malam
     for (let x = 0; x < MW; x++) {
       for (let y = 0; y < MH; y++) {
         const isExitDoor = x === MW - 1 && ((y >= 11 && y <= 13) || (y >= 30 && y <= 32));
@@ -143,16 +135,13 @@
       }
     }
 
-    // Perabot Ruangan dengan Shading & Drop Shadow
     SOL.forEach((s) => {
       const x = s[0] * T, y = s[1] * T, w = s[2] * T, h = s[3] * T, t = s[4];
       if (t === "l") return;
 
-      // Drop shadow di bawah perabot
       wr("rgba(0,0,0,0.38)", x + 2, y + h - 1, w, 4);
 
       if (t === "s") {
-        // Meja Konferensi Aula Rapat (Kayu Mahoni + Layar Presentasi)
         wr("#2a1b18", x, y + 6, w, h - 6);
         wr("#6e3b2e", x + 2, y + 6, w - 4, h - 9);
         wr("#8f5040", x + 4, y + 7, w - 8, h - 12);
@@ -161,7 +150,6 @@
         wr("#e0f2fe", x + 20, y + 2, 12, 1);
       }
       if (t === "k") {
-        // Meja Kafetaria & Mesin Kopi Espresso
         wr("#593e25", x, y + 10, w, h - 10);
         wr("#e2d9c8", x, y + 10, w, 5);
         wr("#ffffff", x + 1, y + 10, w - 2, 1);
@@ -171,7 +159,6 @@
         wr("#22c55e", x + 13, y + 3, 2, 2);
       }
       if (t === "g") {
-        // Rak Server dengan Indikator LED Berkedip
         wr("#111622", x, y, w, h);
         wr("#283247", x, y, w, 5);
         wr("#475569", x + 1, y + 1, w - 2, 1);
@@ -184,7 +171,6 @@
         }
       }
       if (t === "j") {
-        // Meja Kantor dengan Monitor Dual-Screen & Keyboard
         wr("#785a3a", x, y + 10, w, h - 10);
         wr("#a88259", x, y + 10, w, 4);
         wr("#c79f73", x + 1, y + 10, w - 2, 1);
@@ -196,7 +182,6 @@
         }
       }
       if (t === "b") {
-        // Meja Resepsionis Lobi Utama
         wr("#3b4966", x, y + 6, w, h - 6);
         wr("#6478a1", x, y + 6, w, 5);
         wr("#94a8d1", x + 1, y + 6, w - 2, 1);
@@ -206,10 +191,8 @@
       }
     });
 
-    // Karpet Selamat Datang di Lobi
     wr("#7fb4d8", 1 * T, 33 * T - 4, 11 * T, 3);
 
-    // Untaian Lampu Hias Aula Rapat
     for (let i = 0; i < 68; i++) {
       BULBS.push([
         20 + i * 15,
@@ -220,14 +203,14 @@
   })();
 
   /* ==========================================================================
-     2. OUTDOOR LOBBY STREET (JALAN KOTA MALAM PIXEL ART PRO)
+     2. OUTDOOR LOBBY STREET
      ========================================================================== */
   const LW = 48 * T, LH = 34 * T;
   const lc = document.createElement("canvas");
   lc.width = LW;
   lc.height = LH;
   const lx = lc.getContext("2d");
-  const LSOL = [], LAMPS = [], NEON = [], WINL = [], LOBJ = [], VEH = [], LGL = [];
+  const LSOL = [], LAMPS = [], NEON = [], WINL = [], LOBJ = [], VEH = [];
   let vehT = 1, LS = null;
 
   const lr = (c, x, y, w, h) => { lx.fillStyle = c; lx.fillRect(x, y, w, h); };
@@ -368,7 +351,6 @@
     let seed = 77;
     const sr = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
 
-    // Langit Malam Bergradasi & Bintang
     lr("#0a071c", 0, 0, LW, 20);
     lr("#120d30", 0, 20, LW, 16);
     lr("#1a1242", 0, 36, LW, 16);
@@ -378,7 +360,6 @@
     }
     blobOn(lx, "#fef08a", 690, 22, 9, 9);
 
-    // Deretan Ruko & Minimarket Malam
     const BW = [7, 6, 8, 7, 6, 7, 7];
     const PAL = ["#3a2f5c", "#4a3558", "#2f3b66", "#523a4c", "#2d4a5c", "#40355f", "#3b4a52"];
     const CA = ["#e03a4a", "#2d8a4e", "#2d6cdf", "#ffd23f", "#2d8a4e", "#e03a4a", "#8a5ab8"];
@@ -418,7 +399,6 @@
       bx += bw;
     }
 
-    // Trotoar Paving Block & Aspal Jalan Raya
     for (let y = 144; y < 224; y += 16) {
       for (let x = 0; x < LW; x += 16) {
         lr(((x + y) >> 4) % 2 ? "#3a3650" : "#433e5c", x, y, 16, 16);
@@ -437,7 +417,6 @@
     }
     lr("#1a1533", 0, 480, LW, 64);
 
-    // Properti Jalan Kota + Solid Collision Box
     const OB = [
       ["tree", 2.6, 13.2, 0.9, 0.6],
       ["tree", 45.4, 13.2, 0.9, 0.6],
@@ -632,14 +611,37 @@
   }
 
   /* ==========================================================================
-     4. CHARACTER, EMOTE BUBBLE & PROP RENDERING
+     4. CHARACTER, EMOTE BUBBLE & PROP RENDERING (CACHED LABELS = 60 FPS)
      ========================================================================== */
+  const LABEL_CACHE = new Map();
+  function getCachedLabel(name, color) {
+    const txt = String(name || "").slice(0, 10);
+    const key = `${txt}_${color}`;
+    let c = LABEL_CACHE.get(key);
+    if (!c) {
+      c = document.createElement("canvas");
+      c.width = 76;
+      c.height = 12;
+      const x = c.getContext("2d");
+      x.font = '5px "Press Start 2P",monospace';
+      x.textAlign = "center";
+      x.textBaseline = "middle";
+      x.lineWidth = 2;
+      x.strokeStyle = "#0b0716";
+      x.strokeText(txt, 38, 6);
+      x.fillStyle = color;
+      x.fillText(txt, 38, 6);
+      if (LABEL_CACHE.size > 80) LABEL_CACHE.clear();
+      LABEL_CACHE.set(key, c);
+    }
+    return c;
+  }
+
   function drawEmoteBubble(ctx, em, px, py, jy = 0) {
     if (!em) return;
     const bx = Math.round(px - 8);
     const by = Math.round(py - 50 - jy);
 
-    // Balon dialog pixel dengan border hitam & ekor
     ctx.fillStyle = "#0b0716";
     ctx.fillRect(bx - 1, by - 1, 18, 14);
     ctx.fillRect(bx + 5, by + 13, 6, 2);
@@ -648,7 +650,6 @@
     ctx.fillRect(bx + 6, by + 12, 4, 2);
 
     if (em === 1) {
-      // Emote Senyum
       ctx.fillStyle = "#ffd23f";
       ctx.fillRect(bx + 4, by + 2, 8, 8);
       ctx.fillStyle = "#111";
@@ -657,7 +658,6 @@
       ctx.fillRect(bx + 5, by + 7, 6, 1);
       ctx.fillRect(bx + 6, by + 8, 4, 1);
     } else if (em === 2) {
-      // Emote Hati Merah
       ctx.fillStyle = "#ff3b5c";
       ctx.fillRect(bx + 4, by + 3, 3, 3);
       ctx.fillRect(bx + 9, by + 3, 3, 3);
@@ -665,7 +665,6 @@
       ctx.fillRect(bx + 5, by + 7, 6, 2);
       ctx.fillRect(bx + 7, by + 9, 2, 1);
     } else if (em === 3) {
-      // Emote Kaget / Seru (!)
       ctx.fillStyle = "#ef4444";
       ctx.fillRect(bx + 7, by + 2, 2, 5);
       ctx.fillRect(bx + 7, by + 9, 2, 2);
@@ -674,20 +673,17 @@
 
   function drawAvatarLabel(ctx, a, px, py, dir, fr, name, color = "#fff", jy = 0, em = 0) {
     const c = spr(a, dir, fr);
+    const rx = Math.round(px);
+    const ry = Math.round(py);
     ctx.fillStyle = "rgba(0,0,0,0.38)";
-    ctx.fillRect(Math.round(px - 5), Math.round(py - 1), 10, 2);
-    ctx.drawImage(c, Math.round(px - 10), Math.round(py - 29 - jy));
+    ctx.fillRect(rx - 5, ry - 1, 10, 2);
+    ctx.drawImage(c, rx - 12, ry - 34 - Math.round(jy));
 
     if (name) {
-      ctx.font = '5px "Press Start 2P",monospace';
-      ctx.textAlign = "center";
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = "#0b0716";
-      ctx.fillStyle = color;
-      ctx.strokeText(name.slice(0, 10), px, py - 34 - jy);
-      ctx.fillText(name.slice(0, 10), px, py - 34 - jy);
+      const lbl = getCachedLabel(name, color);
+      ctx.drawImage(lbl, rx - 38, ry - 44 - Math.round(jy));
     }
-    if (em) drawEmoteBubble(ctx, em, px, py, jy);
+    if (em) drawEmoteBubble(ctx, em, rx, ry, jy);
   }
 
   function drawPropSprite(ctx, type, px, py) {
