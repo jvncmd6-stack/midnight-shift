@@ -3,10 +3,9 @@
   const { $, vib, openSheet, closeSheet, toast } = W.MS_CFG;
   const { beep } = W.MS_AUDIO;
 
-  // Muat taskGfx.js otomatis jika belum terpasang di index.html
   if (!W.MS_TASK_GFX) {
     const s = document.createElement("script");
-    s.src = "/js/taskGfx.js";
+    s.src = "/js/taskGfx.js?v=4";
     document.head.appendChild(s);
   }
 
@@ -21,6 +20,25 @@
     }
   }
 
+  function showTaskSheet(html) {
+    openSheet(html);
+    const sh = $("sheet");
+    if (sh) {
+      sh.classList.remove("hide");
+      sh.classList.add("on");
+    }
+  }
+
+  function hideTaskSheet() {
+    stopLoop();
+    closeSheet();
+    const sh = $("sheet");
+    if (sh) {
+      sh.classList.remove("on");
+      sh.classList.add("hide");
+    }
+  }
+
   function pickVariedKind(rawType) {
     const t = String(rawType || "").toLowerCase();
     let mapped = null;
@@ -31,7 +49,6 @@
     else if (t.includes("serv") || t.includes("data") || t.includes("up")) mapped = "server";
     else if (t.includes("key") || t.includes("pin") || t.includes("code")) mapped = "keypad";
 
-    // Jika tipe terminal sama dengan tugas terakhir, ambil dari dek rotasi agar selalu variatif
     if (mapped && mapped !== lastKind) {
       lastKind = mapped;
       return mapped;
@@ -46,9 +63,6 @@
     return chosen;
   }
 
-  /* ========================================================================
-     1. SAMBUNG KABEL PANEL (Canvas Kabel Piksel + Percikan Api)
-     ======================================================================== */
   function playWiring(gfx, _isTech, finish) {
     const colors = [
       { id: 0, name: "MERAH", hex: "#ef4444", dark: "#7f1d1d" },
@@ -62,7 +76,7 @@
     const sparks = [];
     let selLeft = null;
 
-    openSheet(
+    showTaskSheet(
       gfx.renderCrtShell({
         code: "TERM-01",
         title: "PANEL KABEL",
@@ -178,7 +192,7 @@
             vib(15);
             renderBtns();
             if (doneSet.size >= 4) {
-              setTimeout(() => { stopLoop(); closeSheet(); finish(); }, 280);
+              setTimeout(() => { hideTaskSheet(); finish(); }, 260);
             }
           } else {
             gfx.spawnPixelSparks(sparks, 232, rowY[rIdx], "#ef4444", 10);
@@ -193,20 +207,17 @@
     };
 
     renderBtns();
-    $("tCancel").onclick = () => { stopLoop(); closeSheet(); };
+    if ($("tCancel")) $("tCancel").onclick = hideTaskSheet;
   }
 
-  /* ========================================================================
-     2. OSILOSKOP FREKUENSI SINYAL (Dual-Wave Pixel Scope)
-     ======================================================================== */
   function playFrequency(gfx, isTech, finish) {
     const targetFreq = 2 + Math.floor(Math.random() * 5);
     let userFreq = 1;
     let phase = 0;
     let lock = 0;
-    const goal = isTech ? 20 : 32;
+    const goal = isTech ? 18 : 28;
 
-    openSheet(
+    showTaskSheet(
       gfx.renderCrtShell({
         code: "TERM-02",
         title: "OSILOSKOP RADIO",
@@ -231,14 +242,12 @@
       ctx.fillStyle = "#14532d";
       ctx.fillRect(0, 55, cv.width, 2);
 
-      // Gelombang Target
       ctx.fillStyle = "#22c55e";
       for (let x = 0; x < cv.width; x += 4) {
         const y = 56 + Math.sin(x * 0.03 * targetFreq + phase) * 34;
         ctx.fillRect(x, Math.round(y), 3, 3);
       }
 
-      // Gelombang User
       const ok = Math.abs(userFreq - targetFreq) <= 0.35;
       ctx.fillStyle = ok ? "#ffffff" : "#facc15";
       for (let x = 0; x < cv.width; x += 4) {
@@ -256,25 +265,22 @@
         clearInterval(iv);
         beep(780, 0.12);
         vib(18);
-        closeSheet();
+        hideTaskSheet();
         finish();
       }
     }, 45);
     cleanupFn = () => clearInterval(iv);
-    $("tCancel").onclick = () => { stopLoop(); closeSheet(); };
+    if ($("tCancel")) $("tCancel").onclick = hideTaskSheet;
   }
 
-  /* ========================================================================
-     3. PEMINDAI BIOMETRIK LASER (Hold-to-Scan Pixel Matrix)
-     ======================================================================== */
   function playBiometric(gfx, isTech, finish) {
     let pct = 0;
     let hold = false;
     let ly = 14;
     let dir = 1;
-    const rate = isTech ? 2.7 : 1.9;
+    const rate = isTech ? 2.8 : 2.0;
 
-    openSheet(
+    showTaskSheet(
       gfx.renderCrtShell({
         code: "TERM-03",
         title: "SCAN BIOMETRIK",
@@ -319,17 +325,14 @@
         clearInterval(iv);
         beep(820, 0.12);
         vib(18);
-        closeSheet();
+        hideTaskSheet();
         finish();
       }
     }, 35);
     cleanupFn = () => clearInterval(iv);
-    $("tCancel").onclick = () => { stopLoop(); closeSheet(); };
+    if ($("tCancel")) $("tCancel").onclick = hideTaskSheet;
   }
 
-  /* ========================================================================
-     4. PANEL SEKRING TEGANGAN (Sakelar Pemutus Arus Berurutan)
-     ======================================================================== */
   function playFuse(gfx, isTech, finish) {
     const len = isTech ? 4 : 5;
     const seq = Array.from({ length: len }, () => Math.floor(Math.random() * 4));
@@ -345,7 +348,7 @@
         gfx.drawPixelButton(`⚡ S${i + 1}`, `data-sw="${i}" style="width:22%;padding:14px 0"`, "#1e293b", "#38bdf8", "#38bdf8")
       ).join("");
 
-      openSheet(
+      showTaskSheet(
         gfx.renderCrtShell({
           code: "TERM-04",
           title: "GARDU SEKRING",
@@ -363,7 +366,7 @@
             beep(490 + step * 90, 0.07);
             vib(12);
             step++;
-            if (step >= len) { closeSheet(); finish(); }
+            if (step >= len) { hideTaskSheet(); finish(); }
             else render();
           } else {
             beep(140, 0.15);
@@ -374,14 +377,11 @@
           }
         };
       });
-      $("tCancel").onclick = closeSheet;
+      if ($("tCancel")) $("tCancel").onclick = hideTaskSheet;
     };
     render();
   }
 
-  /* ========================================================================
-     5. BUFFER SERVER DATA (Tangkap Paket Piksel ke Slot Server)
-     ======================================================================== */
   function playServer(gfx, isTech, finish) {
     let caught = 0;
     const goal = isTech ? 4 : 5;
@@ -389,7 +389,7 @@
     let px = 30 + Math.random() * 190;
     let py = 8;
 
-    openSheet(
+    showTaskSheet(
       gfx.renderCrtShell({
         code: "TERM-05",
         title: "SERVER BUFFER",
@@ -421,7 +421,7 @@
         px = 20 + Math.random() * 210;
         if (caught >= goal) {
           clearInterval(iv);
-          closeSheet();
+          hideTaskSheet();
           finish();
           return;
         }
@@ -447,12 +447,9 @@
       ctx.fillText(`DATA: ${caught}/${goal}`, 8, 14);
     }, 35);
     cleanupFn = () => clearInterval(iv);
-    $("tCancel").onclick = () => { stopLoop(); closeSheet(); };
+    if ($("tCancel")) $("tCancel").onclick = hideTaskSheet;
   }
 
-  /* ========================================================================
-     6. DEKRIPSI PIN KEAMANAN (Keypad Terminal Fosfor)
-     ======================================================================== */
   function playKeypad(gfx, isTech, finish) {
     const len = isTech ? 3 : 4;
     let pin = "";
@@ -464,7 +461,7 @@
         gfx.drawPixelButton(String(n), `data-n="${n}" style="width:29%;padding:10px 0;font-size:11px"`, "#0f172a", "#38bdf8", "#334155")
       ).join("");
 
-      openSheet(
+      showTaskSheet(
         gfx.renderCrtShell({
           code: "TERM-06",
           title: "DEKRIPSI SANDI",
@@ -482,7 +479,7 @@
           beep(480 + typed.length * 80, 0.06);
           vib(8);
           if (typed === pin) {
-            closeSheet();
+            hideTaskSheet();
             finish();
           } else if (typed.length >= len) {
             beep(150, 0.15);
@@ -495,14 +492,11 @@
           }
         };
       });
-      $("tCancel").onclick = closeSheet;
+      if ($("tCancel")) $("tCancel").onclick = hideTaskSheet;
     };
     render();
   }
 
-  /* ========================================================================
-     ENTRY POINT & FALLBACK GFX
-     ======================================================================== */
   function getGfx() {
     if (W.MS_TASK_GFX) return W.MS_TASK_GFX;
     return {
