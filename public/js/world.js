@@ -611,7 +611,7 @@
   }
 
   /* ==========================================================================
-     4. CHARACTER, EMOTE BUBBLE & PROP RENDERING (CACHED LABELS = 60 FPS)
+     4. CHARACTER, EMOTE BUBBLE & PROP RENDERING (CACHED LABELS)
      ========================================================================== */
   const LABEL_CACHE = new Map();
   function getCachedLabel(name, color) {
