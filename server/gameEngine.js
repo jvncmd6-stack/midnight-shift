@@ -17,7 +17,6 @@ const { handlePlayerAction } = require("./gameCombat");
 
 const BOT_NAMES = ["Rani", "Dimas", "Sekar", "Bayu", "Putri", "Raka", "Laras", "Eko", "Nina", "Fajar", "Tari", "Yoga"];
 
-// Samakan 100% dengan SOL & pintu keluar di public/js/worldIndoor.js
 const MAP_SOL = [
   [41, 2, 18, 3],
   [36, 29, 5, 2],
@@ -319,7 +318,7 @@ class GameEngine {
         : this.finishMatch("GUARD", "Waktu habis sebelum warga berhasil kabur!");
     }
 
-    if (this.tickCount % 2 === 0) this.broadcastFilteredSnapshots();
+    this.broadcastFilteredSnapshots();
   }
 
   stepBotAI(bot, dt) {
@@ -434,6 +433,14 @@ class GameEngine {
         }
       });
 
+      const nearbyProps = [];
+      for (let i = 0; i < this.props.length; i++) {
+        const pr = this.props[i];
+        if (!pr.broken && Math.abs(pr.x - viewer.x) < 20 && Math.abs(pr.z - viewer.z) < 15) {
+          nearbyProps.push(pr);
+        }
+      }
+
       this.io.to(viewer.socketId).emit("match:snapshot", {
         ...baseState,
         you: {
@@ -454,7 +461,7 @@ class GameEngine {
           abilityCd: Math.max(0, Math.ceil(viewer.abilityCdUntil - this.elapsed))
         },
         entities: visibleEntities,
-        props: this.props
+        props: nearbyProps
       });
     });
   }
