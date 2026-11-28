@@ -7,12 +7,12 @@
   const NET = W.MS_NET;
 
   [
-    "/js/emotePro.js?v=5",
-    "/js/propArt.js?v=5",
-    "/js/hudMeeting.js?v=5",
-    "/js/lobbyUi.js?v=5",
-    "/js/escapeFx.js?v=5",
-    "/js/roleFx.js?v=5"
+    "/js/emotePro.js?v=6",
+    "/js/propArt.js?v=6",
+    "/js/hudMeeting.js?v=6",
+    "/js/lobbyUi.js?v=6",
+    "/js/escapeFx.js?v=6",
+    "/js/roleFx.js?v=6"
   ].forEach((src) => {
     if (!document.querySelector(`script[src="${src}"]`)) {
       const s = document.createElement("script");
@@ -21,16 +21,16 @@
     }
   });
 
-  const cv = $("c"), ctx = cv.getContext("2d");
+  const cv = $("c"), ctx = cv.getContext("2d", { alpha: false });
   let VW = 300, VH = 170, SC = 3, scene = "splash";
   let jx = 0, jy = 0, keys = {}, camX = 0, camY = 0, pdir = 0, tclock = 0, inputSeq = 0;
 
-  const LM = { x: 24, z: 12.6, vx: 0, vz: 0, wd: 0, dir: 0, jy: 0, vy: 0, em: 0, et: 0, mv: false };
-  const PRED = { ready: false, x: 0, z: 0, dir: 0, mv: false, wd: 0 };
+  const LM = { x: 24, z: 12.6, wd: 0, dir: 0, jy: 0, vy: 0, em: 0, et: 0, mv: false };
+  const PRED = { ready: false, x: 0, z: 0, dir: 0, mv: false, wd: 0, stopAt: 0 };
   const cam = { x: 0, y: 0, on: 0 };
   const ENT_SMOOTH = new Map();
 
-  // Cache label nama agar tidak memanggil strokeText setiap frame
+  // Cache label nama anti-lag
   const NAME_CACHE = new Map();
   function getNameCanvas(name, color) {
     const txt = String(name || "").slice(0, 10);
@@ -67,7 +67,7 @@
     }
   }
 
-  // Cache masker cahaya senter
+  // Cache masker senter
   const LIGHT_MASK_CACHE = new Map();
   function getLightMask(rad, darkAlpha) {
     const key = `${rad}_${darkAlpha}`;
@@ -95,7 +95,7 @@
 
   function resize() {
     const pt = innerHeight > innerWidth;
-    SC = pt ? Math.max(2, Math.round(innerWidth / 150)) : Math.max(2, Math.min(Math.round(innerWidth / 300), Math.round(innerHeight / 150)));
+    SC = pt ? Math.max(2, Math.round(innerWidth / 155)) : Math.max(2, Math.min(Math.round(innerWidth / 300), Math.round(innerHeight / 155)));
     VW = Math.ceil(innerWidth / SC);
     VH = Math.ceil(innerHeight / SC);
     cv.width = VW;
@@ -255,7 +255,7 @@
   });
 
   /* ---------- Main Loop ---------- */
-  let last = performance.now(), netSendAcc = 0;
+  let last = performance.now(), netSendAcc = 0, lastSentIx = 0, lastSentIy = 0;
   function loop(now) {
     requestAnimationFrame(loop);
     const dt = Math.min((now - last) / 1000, 0.05);
@@ -284,13 +284,13 @@
     if (scene === "lobby") {
       stepStreetTraffic(dt);
       const l = Math.hypot(ix, iy);
-      LM.mv = l > 0.15;
+      LM.mv = l > 0.12;
       if (LM.mv) {
-        const nx = LM.x + (ix / l) * 4.2 * dt;
-        const nz = LM.z + (iy / l) * 4.2 * dt;
+        const nx = LM.x + (ix / l) * 4.3 * dt;
+        const nz = LM.z + (iy / l) * 4.3 * dt;
         if (!lobbyBlocked(nx, LM.z)) LM.x = nx;
         if (!lobbyBlocked(LM.x, nz)) LM.z = nz;
-        LM.wd += 4.2 * dt;
+        LM.wd += 4.3 * dt;
         LM.dir = Math.abs(ix) > Math.abs(iy) ? (ix > 0 ? 2 : 3) : (iy > 0 ? 0 : 1);
       } else {
         LM.wd = 0;
@@ -299,24 +299,39 @@
       if (LM.em) { LM.et += dt; if (LM.et > 2.2) LM.em = 0; }
 
       netSendAcc += dt;
-      if (netSendAcc >= 0.05) { netSendAcc = 0; NET.sendLobbyMove(LM.x, LM.z, LM.dir, LM.em, LM.jy); }
+      const changed = Math.abs(ix - lastSentIx) > 0.08 || Math.abs(iy - lastSentIy) > 0.08;
+      if (changed || (LM.mv && netSendAcc >= 0.06)) {
+        netSendAcc = 0;
+        lastSentIx = ix;
+        lastSentIy = iy;
+        NET.sendLobbyMove(LM.x, LM.z, LM.dir, LM.em, LM.jy);
+      }
       renderWorld(false, LM.x, LM.z, dt);
     } else if (scene === "hud") {
+      // Kirim input INSTAN saat arah berubah, jangan tunggu timer
       netSendAcc += dt;
-      if (netSendAcc >= 0.04) { netSendAcc = 0; NET.sendPlayerInput(++inputSeq, ix, iy, Math.atan2(iy, ix)); }
+      const inputChanged = Math.abs(ix - lastSentIx) > 0.06 || Math.abs(iy - lastSentIy) > 0.06;
+      const isActiveInput = Math.hypot(ix, iy) > 0.1;
+      if (inputChanged || (isActiveInput && netSendAcc >= 0.06)) {
+        netSendAcc = 0;
+        lastSentIx = ix;
+        lastSentIy = iy;
+        NET.sendPlayerInput(++inputSeq, ix, iy, Math.atan2(iy, ix));
+      }
+
       const snap = NET.getSnapshot();
       if (snap && snap.you) {
-        if (!PRED.ready || Math.hypot(snap.you.x - PRED.x, snap.you.z - PRED.z) > 4.5) {
+        if (!PRED.ready || Math.hypot(snap.you.x - PRED.x, snap.you.z - PRED.z) > 4.0) {
           PRED.x = snap.you.x;
           PRED.z = snap.you.z;
           PRED.dir = snap.you.dir || 0;
           PRED.ready = true;
         }
 
-        // Client-Side Prediction 60 FPS untuk pemain lokal
         const canMoveLocal = !snap.you.dead && !snap.you.escaped && !snap.you.stunned &&
           !(snap.you.team === "GUARD" && snap.graceLeft > 0);
         const mag = Math.hypot(ix, iy);
+        const wasMoving = PRED.mv;
         PRED.mv = canMoveLocal && mag > 0.1;
 
         if (PRED.mv) {
@@ -331,17 +346,23 @@
           PRED.dir = Math.abs(ix) > Math.abs(iy) ? (ix > 0 ? 2 : 3) : (iy > 0 ? 0 : 1);
           PRED.wd += step;
         } else {
+          if (wasMoving) PRED.stopAt = tclock;
           PRED.wd = 0;
         }
 
-        // Koreksi halus ke posisi server tanpa patah-patah
+        // Anti Uget-Uget: jangan tarik mundur saat sedang jalan kecuali nyangkut jauh (>1.6 tile)
         const errX = snap.you.x - PRED.x;
         const errZ = snap.you.z - PRED.z;
         const errDist = Math.hypot(errX, errZ);
-        if (errDist > 0.05) {
-          const pull = PRED.mv ? 0.12 : 0.25;
-          PRED.x += errX * pull;
-          PRED.z += errZ * pull;
+        if (PRED.mv) {
+          if (errDist > 1.65) {
+            PRED.x += errX * 0.2;
+            PRED.z += errZ * 0.2;
+          }
+        } else if (tclock - PRED.stopAt > 0.16 && errDist > 0.18) {
+          // Baru sinkron lembut setelah berhenti 160ms agar tidak mental balik
+          PRED.x += errX * 0.18;
+          PRED.z += errZ * 0.18;
         }
 
         if (W.MS_HUD) W.MS_HUD.updateHud(snap);
@@ -372,7 +393,7 @@
     const cty_ = mh <= VH ? (mh - VH) / 2 : cl(fz * T - VH / 2, 0, mh - VH);
     if (!cam.on) { cam.x = ctx_; cam.y = cty_; cam.on = 1; }
     else {
-      const k = 1 - Math.exp(-dt * 18);
+      const k = 1 - Math.exp(-dt * 22);
       cam.x += (ctx_ - cam.x) * k;
       cam.y += (cty_ - cam.y) * k;
     }
@@ -400,10 +421,15 @@
       drawList.push({ y: LM.z, f: () => drawAvatarFast(ctx, ME, LM.x * T - camX, LM.z * T - camY, LM.dir, fr, getUN(), "#ffd23f", LM.jy, LM.em) });
     } else if (snap) {
       const propDrawer = (W.MS_PROP_ART && W.MS_PROP_ART.drawPropSpritePro) || W.MS_WORLD.drawPropSprite;
-      const lerpFactor = 1 - Math.exp(-dt * 16);
+      const lerpFactor = 1 - Math.exp(-dt * 14);
       const activeIds = new Set();
 
-      (snap.props || []).forEach((p) => drawList.push({ y: p.z, f: () => propDrawer(ctx, p.type, p.x * T - camX, p.z * T - camY) }));
+      (snap.props || []).forEach((p) => {
+        const px = p.x * T - camX, py = p.z * T - camY;
+        if (px < -32 || px > VW + 32 || py < -32 || py > VH + 32) return;
+        drawList.push({ y: p.z, f: () => propDrawer(ctx, p.type, px, py) });
+      });
+
       (snap.entities || []).forEach((e) => {
         if (e.dead || e.escaped) return;
         const isMe = String(e.id) === String(snap.you.id);
