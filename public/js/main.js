@@ -6,14 +6,13 @@
   const { audioOn, MU } = W.MS_AUDIO;
   const NET = W.MS_NET;
 
-  // Muat modul tambahan secara otomatis
   [
-    "/js/emotePro.js?v=3",
-    "/js/propArt.js?v=3",
-    "/js/hudMeeting.js?v=3",
-    "/js/lobbyUi.js?v=3",
-    "/js/escapeFx.js?v=3",
-    "/js/roleFx.js?v=3"
+    "/js/emotePro.js?v=4",
+    "/js/propArt.js?v=4",
+    "/js/hudMeeting.js?v=4",
+    "/js/lobbyUi.js?v=4",
+    "/js/escapeFx.js?v=4",
+    "/js/roleFx.js?v=4"
   ].forEach((src) => {
     if (!document.querySelector(`script[src="${src}"]`)) {
       const s = document.createElement("script");
@@ -23,23 +22,84 @@
   });
 
   const cv = $("c"), ctx = cv.getContext("2d");
-  const dm = document.createElement("canvas"), dx = dm.getContext("2d");
   let VW = 300, VH = 170, SC = 3, scene = "splash";
   let jx = 0, jy = 0, keys = {}, camX = 0, camY = 0, pdir = 0, tclock = 0, inputSeq = 0;
 
   const LM = { x: 24, z: 12.6, vx: 0, vz: 0, wd: 0, dir: 0, jy: 0, vy: 0, em: 0, et: 0, mv: false };
   const cam = { x: 0, y: 0, on: 0 };
+  const ENT_SMOOTH = new Map();
+
+  // Cache label nama agar tidak memanggil strokeText setiap frame (anti-lag)
+  const NAME_CACHE = new Map();
+  function getNameCanvas(name, color) {
+    const txt = String(name || "").slice(0, 10);
+    const key = `${txt}_${color}`;
+    let c = NAME_CACHE.get(key);
+    if (!c) {
+      c = document.createElement("canvas");
+      c.width = 76;
+      c.height = 12;
+      const x = c.getContext("2d");
+      x.font = '5px "Press Start 2P",monospace';
+      x.textAlign = "center";
+      x.textBaseline = "middle";
+      x.lineWidth = 2;
+      x.strokeStyle = "#0b0716";
+      x.strokeText(txt, 38, 6);
+      x.fillStyle = color;
+      x.fillText(txt, 38, 6);
+      if (NAME_CACHE.size > 80) NAME_CACHE.clear();
+      NAME_CACHE.set(key, c);
+    }
+    return c;
+  }
+
+  function drawAvatarFast(ctx2, avatar, px, py, dir, fr, name, color, jy = 0, em = 0) {
+    if (W.MS_EMOTE_PRO && W.MS_EMOTE_PRO.drawAvatarLabelPro) {
+      // Kirim nama kosong ke emotePro supaya emotePro tidak menjalankan strokeText berat
+      W.MS_EMOTE_PRO.drawAvatarLabelPro(ctx2, avatar, px, py, dir, fr, "", color, jy, em);
+    } else {
+      W.MS_WORLD.drawAvatarLabel(ctx2, avatar, px, py, dir, fr, "", color, jy, em);
+    }
+    if (name) {
+      const nc = getNameCanvas(name, color);
+      ctx2.drawImage(nc, Math.round(px) - 38, Math.round(py) - 44 - Math.round(jy));
+    }
+  }
+
+  // Cache masker cahaya senter agar tidak membuat radialGradient 60x/detik
+  const LIGHT_MASK_CACHE = new Map();
+  function getLightMask(rad, darkAlpha) {
+    const key = `${rad}_${darkAlpha}`;
+    let m = LIGHT_MASK_CACHE.get(key);
+    if (!m) {
+      const size = rad * 2 + 4;
+      m = document.createElement("canvas");
+      m.width = size;
+      m.height = size;
+      const mx = m.getContext("2d");
+      const cx = size >> 1;
+      const grad = mx.createRadialGradient(cx, cx, rad * 0.36, cx, cx, rad);
+      grad.addColorStop(0, "rgba(0,0,0,0)");
+      grad.addColorStop(0.68, `rgba(4,6,20,${darkAlpha * 0.45})`);
+      grad.addColorStop(1, `rgba(4,6,20,${darkAlpha})`);
+      mx.fillStyle = grad;
+      mx.fillRect(0, 0, size, size);
+      LIGHT_MASK_CACHE.set(key, m);
+    }
+    return m;
+  }
 
   addEventListener("pointerdown", audioOn);
   addEventListener("keydown", audioOn);
 
   function resize() {
     const pt = innerHeight > innerWidth;
-    SC = pt ? Math.max(2, Math.round(innerWidth / 140)) : Math.max(2, Math.min(Math.round(innerWidth / 300), Math.round(innerHeight / 150)));
+    SC = pt ? Math.max(2, Math.round(innerWidth / 150)) : Math.max(2, Math.min(Math.round(innerWidth / 300), Math.round(innerHeight / 150)));
     VW = Math.ceil(innerWidth / SC);
     VH = Math.ceil(innerHeight / SC);
-    cv.width = dm.width = VW;
-    cv.height = dm.height = VH;
+    cv.width = VW;
+    cv.height = VH;
     ctx.imageSmoothingEnabled = false;
     cam.on = 0;
   }
@@ -48,10 +108,13 @@
 
   function show(id) {
     closeSheet();
+    const sh = $("sheet");
+    if (sh) { sh.classList.remove("on"); sh.classList.add("hide"); }
     ["splash", "creator", "lobby", "hud"].forEach((s) => $(s).classList.toggle("hide", s !== id));
     scene = id;
     document.body.className = id;
     cam.on = 0;
+    ENT_SMOOTH.clear();
     MU.mode = id;
     MU.force = 1;
     if (id !== "hud" && W.MS_ESCAPE_FX) W.MS_ESCAPE_FX.ensureControls(false);
@@ -90,6 +153,8 @@
 
   function onRoomUpdated(room) {
     closeSheet();
+    const sh = $("sheet");
+    if (sh) { sh.classList.remove("on"); sh.classList.add("hide"); }
     if (scene !== "lobby") show("lobby");
     $("lCode").textContent = `ROOM #${room.code}`;
     $("lMode").textContent = `${room.mode} · ${room.phase}`;
@@ -99,7 +164,10 @@
     $("bMode").textContent = `MODE: ${room.mode}`;
   }
 
-  function onMatchStarted(info) { if (W.MS_HUD) W.MS_HUD.onMatchStarted(NET, show, info); }
+  function onMatchStarted(info) {
+    ENT_SMOOTH.clear();
+    if (W.MS_HUD) W.MS_HUD.onMatchStarted(NET, show, info);
+  }
   function onMeetingUpdate(m) { if (W.MS_HUD) W.MS_HUD.onMeetingUpdate(NET, m); }
   function onMatchResult(res) { if (W.MS_HUD) W.MS_HUD.onMatchResult(show, res); }
 
@@ -107,12 +175,12 @@
   $("bSpr").onclick = () => NET.sendPlayerAction("SPRINT");
   $("bAct").onclick = () => {
     const snap = NET.getSnapshot();
-    if (!snap) return;
+    if (!snap || !snap.you) return;
     const me = snap.you;
-    if (me.escaped || me.dead) return;
+    if (me.escaped || me.dead || me.alive === false) return;
     if (me.team === "GUARD") return NET.sendPlayerAction("ATTACK");
 
-    const nearTerm = (snap.terminals || []).find((t) => !t.done && Math.hypot(t.x - me.x, t.z - me.z) < 2.6);
+    const nearTerm = (snap.terminals || []).find((t) => !t.done && Math.hypot(t.x - me.x, t.z - me.z) < 2.8);
     if (nearTerm) {
       const targetTermId = nearTerm.id !== undefined ? nearTerm.id : nearTerm.idx;
       openTaskModal(nearTerm.type || nearTerm.k || "", me.role === "TEKNISI", () => {
@@ -120,7 +188,7 @@
       });
       return;
     }
-    if (Math.hypot(32 - me.x, 22 - me.z) < 2.5) return NET.sendPlayerAction("CALL_MEETING");
+    if (Math.hypot(32 - me.x, 22 - me.z) < 2.6) return NET.sendPlayerAction("CALL_MEETING");
 
     const roleUpper = String(me.role || "").toUpperCase();
     if (roleUpper === "TEKNISI") toast("📡 RADAR X-RAY AKTIF 6 DETIK!", "i");
@@ -177,7 +245,7 @@
       if (scene === "creator") {
         const pcv = $("pv").getContext("2d");
         pcv.imageSmoothingEnabled = false;
-        const sp = W.MS_SPR.spr(ME, pdir, [0, 1, 0, 2][Math.floor(tclock * 4) % 4]);
+        const sp = W.MS_SPR.spr(ME, pdir, 0);
         pcv.clearRect(0, 0, pcv.width, pcv.height);
         pcv.drawImage(sp, 0, 0);
       }
@@ -186,8 +254,8 @@
 
     const sheetEl = $("sheet");
     const setEl = $("set");
-    const modalOpen = (sheetEl && !sheetEl.classList.contains("hide") && sheetEl.offsetParent !== null) ||
-                      (setEl && !setEl.classList.contains("hide") && setEl.offsetParent !== null);
+    const modalOpen = (sheetEl && sheetEl.classList.contains("on")) ||
+                      (setEl && !setEl.classList.contains("hide"));
     const ix = modalOpen ? 0 : cl(jx + (keys.d ? 1 : 0) - (keys.a ? 1 : 0), -1, 1);
     const iy = modalOpen ? 0 : cl(jy + (keys.s ? 1 : 0) - (keys.w ? 1 : 0), -1, 1);
 
@@ -202,6 +270,8 @@
         if (!lobbyBlocked(LM.x, nz)) LM.z = nz;
         LM.wd += 4.2 * dt;
         LM.dir = Math.abs(ix) > Math.abs(iy) ? (ix > 0 ? 2 : 3) : (iy > 0 ? 0 : 1);
+      } else {
+        LM.wd = 0;
       }
       if (LM.jy > 0) { LM.vy -= 300 * dt; LM.jy = Math.max(0, LM.jy + LM.vy * dt); }
       if (LM.em) { LM.et += dt; if (LM.et > 2.2) LM.em = 0; }
@@ -221,11 +291,16 @@
           return;
         }
 
-        let focusX = snap.you.x;
-        let focusZ = snap.you.z;
-        if (snap.you.escaped || snap.you.dead) {
+        const mySmooth = ENT_SMOOTH.get(snap.you.id);
+        let focusX = mySmooth ? mySmooth.x : snap.you.x;
+        let focusZ = mySmooth ? mySmooth.z : snap.you.z;
+        if (snap.you.escaped || snap.you.dead || snap.you.alive === false) {
           const target = W.MS_ESCAPE_FX ? W.MS_ESCAPE_FX.getSpectateTarget(snap) : null;
-          if (target) { focusX = target.x; focusZ = target.z; }
+          if (target) {
+            const ts = ENT_SMOOTH.get(target.id);
+            focusX = ts ? ts.x : target.x;
+            focusZ = ts ? ts.z : target.z;
+          }
         }
         renderWorld(true, focusX, focusZ, dt, snap, focusX, focusZ);
       }
@@ -237,7 +312,11 @@
     const ctx_ = mw <= VW ? (mw - VW) / 2 : cl(fx * T - VW / 2, 0, mw - VW);
     const cty_ = mh <= VH ? (mh - VH) / 2 : cl(fz * T - VH / 2, 0, mh - VH);
     if (!cam.on) { cam.x = ctx_; cam.y = cty_; cam.on = 1; }
-    else { cam.x += (ctx_ - cam.x) * (1 - Math.exp(-dt * 10)); cam.y += (cty_ - cam.y) * (1 - Math.exp(-dt * 10)); }
+    else {
+      const k = 1 - Math.exp(-dt * 14);
+      cam.x += (ctx_ - cam.x) * k;
+      cam.y += (cty_ - cam.y) * k;
+    }
     camX = Math.round(cam.x);
     camY = Math.round(cam.y);
 
@@ -246,31 +325,59 @@
     ctx.drawImage(isGame ? wc : lc, -camX, -camY);
 
     const drawList = [];
-    const avatarDrawer = (W.MS_EMOTE_PRO && W.MS_EMOTE_PRO.drawAvatarLabelPro) || W.MS_WORLD.drawAvatarLabel;
+    const walkStep = [1, 0, 2, 0][Math.floor(tclock * 7) % 4];
 
     if (!isGame) {
       renderStreetLayer(ctx, camX, camY, VW, VH, tclock, drawList);
       NET.lobbyPeers.forEach((p) => {
-        p.x += (p.tx - p.x) * 0.25; p.z += (p.tz - p.z) * 0.25;
-        drawList.push({ y: p.z, f: () => avatarDrawer(ctx, p.avatar, p.x * T - camX, p.z * T - camY, p.dir, 0, p.name, "#fff", p.jy, p.em) });
+        const dxp = p.tx - p.x, dzp = p.tz - p.z;
+        const peerMoving = Math.hypot(dxp, dzp) > 0.03;
+        p.x += dxp * (1 - Math.exp(-dt * 14));
+        p.z += dzp * (1 - Math.exp(-dt * 14));
+        const pfr = peerMoving ? walkStep : 0;
+        drawList.push({ y: p.z, f: () => drawAvatarFast(ctx, p.avatar, p.x * T - camX, p.z * T - camY, p.dir, pfr, p.name, "#fff", p.jy, p.em) });
       });
       const fr = LM.mv ? [1, 0, 2, 0][Math.floor(LM.wd * 2.2) % 4] : 0;
-      drawList.push({ y: LM.z, f: () => avatarDrawer(ctx, ME, LM.x * T - camX, LM.z * T - camY, LM.dir, fr, getUN(), "#ffd23f", LM.jy, LM.em) });
+      drawList.push({ y: LM.z, f: () => drawAvatarFast(ctx, ME, LM.x * T - camX, LM.z * T - camY, LM.dir, fr, getUN(), "#ffd23f", LM.jy, LM.em) });
     } else if (snap) {
-      const wf = (Math.floor(tclock * 8) % 2) + 1;
       const propDrawer = (W.MS_PROP_ART && W.MS_PROP_ART.drawPropSpritePro) || W.MS_WORLD.drawPropSprite;
+      const lerpFactor = 1 - Math.exp(-dt * 16);
+      const activeIds = new Set();
+
       (snap.props || []).forEach((p) => drawList.push({ y: p.z, f: () => propDrawer(ctx, p.type, p.x * T - camX, p.z * T - camY) }));
       (snap.entities || []).forEach((e) => {
         if (e.dead || e.escaped) return;
+        activeIds.add(e.id);
+        let sm = ENT_SMOOTH.get(e.id);
+        if (!sm) {
+          sm = { x: e.x, z: e.z };
+          ENT_SMOOTH.set(e.id, sm);
+        } else if (Math.hypot(e.x - sm.x, e.z - sm.z) > 5) {
+          sm.x = e.x;
+          sm.z = e.z;
+        } else {
+          sm.x += (e.x - sm.x) * lerpFactor;
+          sm.z += (e.z - sm.z) * lerpFactor;
+        }
+
+        const isMoving = Boolean(e.moving) || Math.hypot(e.x - sm.x, e.z - sm.z) > 0.04;
+        const fr = isMoving ? walkStep : 0;
+        const sx = sm.x, sz = sm.z;
+
         drawList.push({
-          y: e.z,
+          y: sz,
           f: () => {
-            const px = e.x * T - camX, py = e.z * T - camY;
+            const px = sx * T - camX, py = sz * T - camY;
             if ((e.disguised || e.isAnonProp) && e.propType) propDrawer(ctx, e.propType, px, py);
-            else avatarDrawer(ctx, e.avatar || ME, px, py, e.dir || 0, wf, e.name, e.team === "GUARD" ? "#ff5d6c" : "#fff", 0, e.em || 0);
+            else drawAvatarFast(ctx, e.avatar || ME, px, py, e.dir || 0, fr, e.name, e.team === "GUARD" ? "#ff5d6c" : "#fff", 0, e.em || 0);
           }
         });
       });
+
+      for (const id of ENT_SMOOTH.keys()) {
+        if (!activeIds.has(id)) ENT_SMOOTH.delete(id);
+      }
+
       (snap.terminals || []).forEach((t) => {
         drawList.push({
           y: t.z,
@@ -312,17 +419,20 @@
         const bx = b[0] - camX, by = b[1] - camY;
         if (bx >= 0 && bx <= VW && by >= 0 && by <= VH) { ctx.fillStyle = b[2]; ctx.fillRect(bx, by, 2, 2); }
       });
+
       const px2 = Math.round(lightX * T - camX), py2 = Math.round(lightZ * T - camY - 8);
       const baseRad = [74, 96, 124][CFG.br] || 74;
       const rad = (snap.blackout && snap.you.team === "CIVILIAN") ? Math.round(baseRad * 0.55) : baseRad;
+      const darkAlpha = [0.78, 0.56, 0.32][CFG.br] ?? 0.78;
+      const mask = getLightMask(rad, darkAlpha);
+      const half = mask.width >> 1;
 
-      dx.globalCompositeOperation = "source-over"; dx.clearRect(0, 0, VW, VH);
-      dx.fillStyle = `rgba(4,6,20,${[0.78, 0.56, 0.32][CFG.br] ?? 0.78})`; dx.fillRect(0, 0, VW, VH);
-      dx.globalCompositeOperation = "destination-out";
-      const grad = dx.createRadialGradient(px2, py2, rad * 0.38, px2, py2, rad);
-      grad.addColorStop(0, "rgba(0,0,0,1)"); grad.addColorStop(0.7, "rgba(0,0,0,0.65)"); grad.addColorStop(1, "rgba(0,0,0,0)");
-      dx.fillStyle = grad; dx.beginPath(); dx.arc(px2, py2, rad, 0, Math.PI * 2); dx.fill();
-      ctx.drawImage(dm, 0, 0);
+      ctx.fillStyle = `rgba(4,6,20,${darkAlpha})`;
+      ctx.fillRect(0, 0, Math.max(0, px2 - half), VH);
+      ctx.fillRect(Math.min(VW, px2 + half), 0, Math.max(0, VW - (px2 + half)), VH);
+      ctx.fillRect(px2 - half, 0, mask.width, Math.max(0, py2 - half));
+      ctx.fillRect(px2 - half, Math.min(VH, py2 + half), mask.width, Math.max(0, VH - (py2 + half)));
+      ctx.drawImage(mask, px2 - half, py2 - half);
 
       if (W.MS_ROLE_FX) W.MS_ROLE_FX.renderRoleWorldOverlays(ctx, camX, camY, VW, VH, snap, tclock);
       if (W.MS_HUD) W.MS_HUD.drawExitCompass(ctx, VW, VH, snap, tclock);
