@@ -6,11 +6,9 @@ const {
   PROPS,
   ZONES,
   TERMINALS,
-  EXIT_GATES,
   ROLES,
   getTaskQuota,
   getRoleDistribution,
-  isBlocked,
   hasLineOfSight
 } = require("../packages/shared/constants");
 const { PHASE } = require("../packages/shared/protocol");
@@ -18,6 +16,42 @@ const { commitMatchReward } = require("./db");
 const { handlePlayerAction } = require("./gameCombat");
 
 const BOT_NAMES = ["Rani", "Dimas", "Sekar", "Bayu", "Putri", "Raka", "Laras", "Eko", "Nina", "Fajar", "Tari", "Yoga"];
+
+// Samakan 100% dengan SOL & pintu keluar di public/js/worldIndoor.js
+const MAP_SOL = [
+  [41, 2, 18, 3],
+  [36, 29, 5, 2],
+  [44, 29, 5, 2],
+  [16, 29, 4, 2],
+  [23, 29, 4, 2],
+  [5, 6, 4, 2],
+  [14, 11, 4, 2],
+  [9, 14, 4, 2],
+  [19, 5, 3, 2],
+  [2, 34, 6, 2],
+  [19.65, 19.05, 0.7, 0.55],
+  [43.65, 19.05, 0.7, 0.55],
+  [19.65, 24.15, 0.7, 0.55],
+  [43.65, 24.15, 0.7, 0.55],
+  [9.65, 21.55, 0.7, 0.55],
+  [53.65, 21.55, 0.7, 0.55]
+];
+
+const DOOR_GATES = [
+  { x: 62.5, z: 12.5 },
+  { x: 62.5, z: 31.5 }
+];
+
+function isMapBlocked(x, y) {
+  if (x < 1.35 || x > 62.65 || y < 1.65 || y > 42.65) return true;
+  for (let i = 0; i < MAP_SOL.length; i++) {
+    const s = MAP_SOL[i];
+    if (x > s[0] - 0.32 && x < s[0] + s[2] + 0.32 && y > s[1] - 0.15 && y < s[1] + s[3] + 0.32) {
+      return true;
+    }
+  }
+  return false;
+}
 
 class GameEngine {
   constructor(io, room, onMatchFinished) {
@@ -139,12 +173,12 @@ class GameEngine {
     });
 
     ZONES.forEach((z) => {
-      if (!z.props.length) return;
-      for (let i = 0; i < 7; i++) {
+      if (!z.props || !z.props.length) return;
+      for (let i = 0; i < 6; i++) {
         const type = z.props[i % z.props.length];
         const px = z.x + 1.5 + Math.random() * (z.w - 3);
         const pz = z.y + 1.5 + Math.random() * (z.h - 3);
-        if (!isBlocked(px, pz)) {
+        if (!isMapBlocked(px, pz)) {
           this.props.push({
             id: `static_${this.props.length}`,
             type,
@@ -189,9 +223,9 @@ class GameEngine {
   setPlayerInput(tgId, input) {
     const pl = this.players.get(String(tgId));
     if (!pl || !pl.alive || pl.escaped) return;
-    pl.ix = input.ix;
-    pl.iy = input.iy;
-    pl.aim = input.aim;
+    pl.ix = Math.max(-1, Math.min(1, Number(input.ix) || 0));
+    pl.iy = Math.max(-1, Math.min(1, Number(input.iy) || 0));
+    pl.aim = Number(input.aim) || 0;
   }
 
   handleAction(tgId, action, payload) {
@@ -206,6 +240,11 @@ class GameEngine {
     if (this.phase === PHASE.PREPARATION && this.elapsed >= this.grace) {
       this.phase = PHASE.ACTIVE;
       this.io.to(this.room.code).emit("game:toast", { text: "SATPAM MULAI PATROLI!", type: "b" });
+    }
+
+    if (!this.gatesOpen && this.progress >= this.quota) {
+      this.gatesOpen = true;
+      this.io.to(this.room.code).emit("game:toast", { text: "PINTU KELUAR TERBUKA! LARI KE KANAN!", type: "g" });
     }
 
     let livingCivilians = 0;
@@ -223,18 +262,22 @@ class GameEngine {
 
       const isSprinting = this.elapsed < pl.sprintUntil;
       const propMult = pl.disguised && pl.propType ? PROPS[pl.propType].speedMult : 1;
-      const speed = (pl.team === "GUARD" ? 4.35 : 4.0) * (isSprinting ? 1.62 : 1) * propMult * dt;
+      const speed = (pl.team === "GUARD" ? 4.35 : 4.15) * (isSprinting ? 1.62 : 1) * propMult * dt;
 
-      if (Math.hypot(pl.ix, pl.iy) > 0.1) {
-        const moveAngle = Math.atan2(pl.iy, pl.ix);
-        let nx = pl.x + Math.cos(moveAngle) * speed;
-        let nz = pl.z + Math.sin(moveAngle) * speed;
+      const mag = Math.hypot(pl.ix, pl.iy);
+      if (mag > 0.1) {
+        const norm = mag > 1 ? 1 / mag : 1;
+        const vx = pl.ix * norm * speed;
+        const vz = pl.iy * norm * speed;
+        let nx = pl.x + vx;
+        let nz = pl.z + vz;
 
-        if (pl.isBot && isBlocked(nx, nz)) {
+        if (pl.isBot && isMapBlocked(nx, nz)) {
+          const moveAngle = Math.atan2(pl.iy, pl.ix);
           for (const offset of [0.8, -0.8, 1.5, -1.5, 2.3, -2.3]) {
             const tx = pl.x + Math.cos(moveAngle + offset) * speed;
             const tz = pl.z + Math.sin(moveAngle + offset) * speed;
-            if (!isBlocked(tx, tz)) {
+            if (!isMapBlocked(tx, tz)) {
               nx = tx;
               nz = tz;
               break;
@@ -242,14 +285,15 @@ class GameEngine {
           }
         }
 
-        if (!isBlocked(nx, pl.z)) pl.x = nx;
-        if (!isBlocked(pl.x, nz)) pl.z = nz;
+        if (!isMapBlocked(nx, pl.z)) pl.x = nx;
+        if (!isMapBlocked(pl.x, nz)) pl.z = nz;
         pl.dir = Math.abs(pl.ix) > Math.abs(pl.iy) ? (pl.ix > 0 ? 2 : 3) : pl.iy > 0 ? 0 : 1;
       }
 
-      if (this.gatesOpen && pl.team === "CIVILIAN" && !pl.disguised) {
-        for (const gate of EXIT_GATES) {
-          if (Math.hypot(gate.x - pl.x, gate.z - pl.z) < 1.95) {
+      if (this.gatesOpen && pl.team === "CIVILIAN") {
+        for (const gate of DOOR_GATES) {
+          if (Math.hypot(gate.x - pl.x, gate.z - pl.z) < 2.35) {
+            pl.disguised = false;
             pl.escaped = true;
             escapedCivilians++;
             livingCivilians = Math.max(0, livingCivilians - 1);
@@ -281,8 +325,10 @@ class GameEngine {
   stepBotAI(bot, dt) {
     if (this.gatesOpen && bot.team === "CIVILIAN") {
       if (bot.disguised) bot.disguised = false;
-      const gate = EXIT_GATES[0] || { x: 62.5, z: 22 };
-      const ang = Math.atan2(gate.z - bot.z, gate.x - bot.x);
+      const nearestGate = DOOR_GATES.reduce((best, g) =>
+        Math.hypot(g.x - bot.x, g.z - bot.z) < Math.hypot(best.x - bot.x, best.z - bot.z) ? g : best
+      , DOOR_GATES[0]);
+      const ang = Math.atan2(nearestGate.z - bot.z, nearestGate.x - bot.x);
       bot.ix = Math.cos(ang);
       bot.iy = Math.sin(ang);
       bot.aim = ang;
