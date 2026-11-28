@@ -109,7 +109,7 @@ h2 { font-size: 12px; margin: 0 0 10px; color: var(--ac); }
   margin: 4px;
 }
 
-/* HUD IN-GAME (Tanpa Tumpang Tindih) */
+/* HUD IN-GAME */
 #hud {
   position: fixed;
   inset: 0;
@@ -242,7 +242,7 @@ body.lobby #lbt { display: flex; }
 .bt .pb { width: 82px; padding: 13px 4px; font-size: 8px; margin: 2px; }
 .bt .pb.off { opacity: .45; }
 
-/* MODAL SHEET (Selalu di atas semua HUD & mengalahkan .hide saat .on) */
+/* MODAL SHEET */
 #sheet {
   position: fixed;
   inset: 0;
