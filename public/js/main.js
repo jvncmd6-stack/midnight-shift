@@ -1,18 +1,18 @@
 (function (W) {
   "use strict";
   const { $, rnd, cl, vib, tgw, getUN, CFG, ME, T, MW, MH, toast, closeSheet } = W.MS_CFG;
-  const { wc, lc, LW, LH, BULBS, lobbyBlocked, drawSky, stepStreetTraffic, renderStreetLayer, renderStreetLights } = W.MS_WORLD;
+  const { wc, lc, LW, LH, BULBS, blocked, lobbyBlocked, drawSky, stepStreetTraffic, renderStreetLayer, renderStreetLights } = W.MS_WORLD;
   const { openTaskModal } = W.MS_TASKS;
   const { audioOn, MU } = W.MS_AUDIO;
   const NET = W.MS_NET;
 
   [
-    "/js/emotePro.js?v=4",
-    "/js/propArt.js?v=4",
-    "/js/hudMeeting.js?v=4",
-    "/js/lobbyUi.js?v=4",
-    "/js/escapeFx.js?v=4",
-    "/js/roleFx.js?v=4"
+    "/js/emotePro.js?v=5",
+    "/js/propArt.js?v=5",
+    "/js/hudMeeting.js?v=5",
+    "/js/lobbyUi.js?v=5",
+    "/js/escapeFx.js?v=5",
+    "/js/roleFx.js?v=5"
   ].forEach((src) => {
     if (!document.querySelector(`script[src="${src}"]`)) {
       const s = document.createElement("script");
@@ -26,10 +26,11 @@
   let jx = 0, jy = 0, keys = {}, camX = 0, camY = 0, pdir = 0, tclock = 0, inputSeq = 0;
 
   const LM = { x: 24, z: 12.6, vx: 0, vz: 0, wd: 0, dir: 0, jy: 0, vy: 0, em: 0, et: 0, mv: false };
+  const PRED = { ready: false, x: 0, z: 0, dir: 0, mv: false, wd: 0 };
   const cam = { x: 0, y: 0, on: 0 };
   const ENT_SMOOTH = new Map();
 
-  // Cache label nama agar tidak memanggil strokeText setiap frame (anti-lag)
+  // Cache label nama agar tidak memanggil strokeText setiap frame
   const NAME_CACHE = new Map();
   function getNameCanvas(name, color) {
     const txt = String(name || "").slice(0, 10);
@@ -56,7 +57,6 @@
 
   function drawAvatarFast(ctx2, avatar, px, py, dir, fr, name, color, jy = 0, em = 0) {
     if (W.MS_EMOTE_PRO && W.MS_EMOTE_PRO.drawAvatarLabelPro) {
-      // Kirim nama kosong ke emotePro supaya emotePro tidak menjalankan strokeText berat
       W.MS_EMOTE_PRO.drawAvatarLabelPro(ctx2, avatar, px, py, dir, fr, "", color, jy, em);
     } else {
       W.MS_WORLD.drawAvatarLabel(ctx2, avatar, px, py, dir, fr, "", color, jy, em);
@@ -67,7 +67,7 @@
     }
   }
 
-  // Cache masker cahaya senter agar tidak membuat radialGradient 60x/detik
+  // Cache masker cahaya senter
   const LIGHT_MASK_CACHE = new Map();
   function getLightMask(rad, darkAlpha) {
     const key = `${rad}_${darkAlpha}`;
@@ -114,6 +114,7 @@
     scene = id;
     document.body.className = id;
     cam.on = 0;
+    PRED.ready = false;
     ENT_SMOOTH.clear();
     MU.mode = id;
     MU.force = 1;
@@ -122,23 +123,41 @@
 
   /* ---------- Splash & Auth ---------- */
   $("who").textContent = tgw ? `Masuk sebagai ${getUN()}` : `Halo, ${getUN()}`;
-  let ld = 0;
-  const ldi = setInterval(() => {
-    ld = Math.min(90, ld + rnd(12, 25));
-    $("ldb").style.width = ld + "%";
-  }, 150);
-
-  NET.authenticate().then((okAuth) => {
-    clearInterval(ldi);
-    $("ldb").style.width = "100%";
-    if (okAuth) {
-      setTimeout(() => {
-        $("ldw").classList.add("hide");
-        $("sp2").classList.add("hide");
-        $("menu").classList.remove("hide");
-      }, 200);
+  function runSplashAuth() {
+    const ldw = $("ldw"), ldb = $("ldb"), sp2 = $("sp2"), menu = $("menu");
+    if (ldw) ldw.style.display = "block";
+    if (ldb) ldb.style.width = "12%";
+    if (sp2) {
+      sp2.classList.remove("hide");
+      sp2.style.display = "block";
+      sp2.textContent = "MENGHUBUNGKAN...";
+      sp2.onclick = null;
     }
-  });
+    if (menu) menu.classList.add("hide");
+
+    let ld = 12;
+    const ldi = setInterval(() => {
+      ld = Math.min(92, ld + rnd(10, 22));
+      if (ldb) ldb.style.width = ld + "%";
+    }, 140);
+
+    NET.authenticate().then((okAuth) => {
+      clearInterval(ldi);
+      if (ldb) ldb.style.width = "100%";
+      if (okAuth) {
+        setTimeout(() => {
+          if (ldw) ldw.style.display = "none";
+          if (sp2) sp2.classList.add("hide");
+          if (menu) menu.classList.remove("hide");
+        }, 180);
+      } else if (sp2) {
+        sp2.textContent = "GAGAL TERHUBUNG · TAP COBA LAGI";
+        sp2.style.cursor = "pointer";
+        sp2.onclick = runSplashAuth;
+      }
+    });
+  }
+  runSplashAuth();
 
   function initSubModules() {
     if (W.MS_LOBBY_UI) W.MS_LOBBY_UI.bindUi(NET, show, () => pdir, (d) => { pdir = d; });
@@ -165,6 +184,7 @@
   }
 
   function onMatchStarted(info) {
+    PRED.ready = false;
     ENT_SMOOTH.clear();
     if (W.MS_HUD) W.MS_HUD.onMatchStarted(NET, show, info);
   }
@@ -180,7 +200,9 @@
     if (me.escaped || me.dead || me.alive === false) return;
     if (me.team === "GUARD") return NET.sendPlayerAction("ATTACK");
 
-    const nearTerm = (snap.terminals || []).find((t) => !t.done && Math.hypot(t.x - me.x, t.z - me.z) < 2.8);
+    const px = PRED.ready ? PRED.x : me.x;
+    const pz = PRED.ready ? PRED.z : me.z;
+    const nearTerm = (snap.terminals || []).find((t) => !t.done && Math.hypot(t.x - px, t.z - pz) < 2.8);
     if (nearTerm) {
       const targetTermId = nearTerm.id !== undefined ? nearTerm.id : nearTerm.idx;
       openTaskModal(nearTerm.type || nearTerm.k || "", me.role === "TEKNISI", () => {
@@ -188,7 +210,7 @@
       });
       return;
     }
-    if (Math.hypot(32 - me.x, 22 - me.z) < 2.6) return NET.sendPlayerAction("CALL_MEETING");
+    if (Math.hypot(32 - px, 22 - pz) < 2.6) return NET.sendPlayerAction("CALL_MEETING");
 
     const roleUpper = String(me.role || "").toUpperCase();
     if (roleUpper === "TEKNISI") toast("📡 RADAR X-RAY AKTIF 6 DETIK!", "i");
@@ -277,13 +299,51 @@
       if (LM.em) { LM.et += dt; if (LM.et > 2.2) LM.em = 0; }
 
       netSendAcc += dt;
-      if (netSendAcc >= 0.06) { netSendAcc = 0; NET.sendLobbyMove(LM.x, LM.z, LM.dir, LM.em, LM.jy); }
+      if (netSendAcc >= 0.05) { netSendAcc = 0; NET.sendLobbyMove(LM.x, LM.z, LM.dir, LM.em, LM.jy); }
       renderWorld(false, LM.x, LM.z, dt);
     } else if (scene === "hud") {
       netSendAcc += dt;
-      if (netSendAcc >= 0.05) { netSendAcc = 0; NET.sendPlayerInput(++inputSeq, ix, iy, Math.atan2(iy, ix)); }
+      if (netSendAcc >= 0.04) { netSendAcc = 0; NET.sendPlayerInput(++inputSeq, ix, iy, Math.atan2(iy, ix)); }
       const snap = NET.getSnapshot();
       if (snap && snap.you) {
+        if (!PRED.ready || Math.hypot(snap.you.x - PRED.x, snap.you.z - PRED.z) > 4.5) {
+          PRED.x = snap.you.x;
+          PRED.z = snap.you.z;
+          PRED.dir = snap.you.dir || 0;
+          PRED.ready = true;
+        }
+
+        // Client-Side Prediction 60 FPS untuk pemain lokal
+        const canMoveLocal = !snap.you.dead && !snap.you.escaped && !snap.you.stunned &&
+          !(snap.you.team === "GUARD" && snap.graceLeft > 0);
+        const mag = Math.hypot(ix, iy);
+        PRED.mv = canMoveLocal && mag > 0.1;
+
+        if (PRED.mv) {
+          const baseSpd = snap.you.team === "GUARD" ? 4.35 : 4.15;
+          const sprMult = snap.you.sprinting ? 1.62 : 1;
+          const step = baseSpd * sprMult * dt;
+          const norm = mag > 1 ? 1 / mag : 1;
+          const nx = PRED.x + ix * norm * step;
+          const nz = PRED.z + iy * norm * step;
+          if (!blocked(nx, PRED.z)) PRED.x = nx;
+          if (!blocked(PRED.x, nz)) PRED.z = nz;
+          PRED.dir = Math.abs(ix) > Math.abs(iy) ? (ix > 0 ? 2 : 3) : (iy > 0 ? 0 : 1);
+          PRED.wd += step;
+        } else {
+          PRED.wd = 0;
+        }
+
+        // Koreksi halus ke posisi server tanpa patah-patah
+        const errX = snap.you.x - PRED.x;
+        const errZ = snap.you.z - PRED.z;
+        const errDist = Math.hypot(errX, errZ);
+        if (errDist > 0.05) {
+          const pull = PRED.mv ? 0.12 : 0.25;
+          PRED.x += errX * pull;
+          PRED.z += errZ * pull;
+        }
+
         if (W.MS_HUD) W.MS_HUD.updateHud(snap);
 
         if (snap.you.escaped && W.MS_ESCAPE_FX && !W.MS_ESCAPE_FX.isSpectating()) {
@@ -291,9 +351,8 @@
           return;
         }
 
-        const mySmooth = ENT_SMOOTH.get(snap.you.id);
-        let focusX = mySmooth ? mySmooth.x : snap.you.x;
-        let focusZ = mySmooth ? mySmooth.z : snap.you.z;
+        let focusX = PRED.x;
+        let focusZ = PRED.z;
         if (snap.you.escaped || snap.you.dead || snap.you.alive === false) {
           const target = W.MS_ESCAPE_FX ? W.MS_ESCAPE_FX.getSpectateTarget(snap) : null;
           if (target) {
@@ -313,7 +372,7 @@
     const cty_ = mh <= VH ? (mh - VH) / 2 : cl(fz * T - VH / 2, 0, mh - VH);
     if (!cam.on) { cam.x = ctx_; cam.y = cty_; cam.on = 1; }
     else {
-      const k = 1 - Math.exp(-dt * 14);
+      const k = 1 - Math.exp(-dt * 18);
       cam.x += (ctx_ - cam.x) * k;
       cam.y += (cty_ - cam.y) * k;
     }
@@ -332,8 +391,8 @@
       NET.lobbyPeers.forEach((p) => {
         const dxp = p.tx - p.x, dzp = p.tz - p.z;
         const peerMoving = Math.hypot(dxp, dzp) > 0.03;
-        p.x += dxp * (1 - Math.exp(-dt * 14));
-        p.z += dzp * (1 - Math.exp(-dt * 14));
+        p.x += dxp * (1 - Math.exp(-dt * 15));
+        p.z += dzp * (1 - Math.exp(-dt * 15));
         const pfr = peerMoving ? walkStep : 0;
         drawList.push({ y: p.z, f: () => drawAvatarFast(ctx, p.avatar, p.x * T - camX, p.z * T - camY, p.dir, pfr, p.name, "#fff", p.jy, p.em) });
       });
@@ -347,6 +406,22 @@
       (snap.props || []).forEach((p) => drawList.push({ y: p.z, f: () => propDrawer(ctx, p.type, p.x * T - camX, p.z * T - camY) }));
       (snap.entities || []).forEach((e) => {
         if (e.dead || e.escaped) return;
+        const isMe = String(e.id) === String(snap.you.id);
+
+        if (isMe && PRED.ready) {
+          const sx = PRED.x, sz = PRED.z;
+          const fr = PRED.mv ? [1, 0, 2, 0][Math.floor(PRED.wd * 2.2) % 4] : 0;
+          drawList.push({
+            y: sz,
+            f: () => {
+              const px = sx * T - camX, py = sz * T - camY;
+              if ((e.disguised || e.isAnonProp) && e.propType) propDrawer(ctx, e.propType, px, py);
+              else drawAvatarFast(ctx, e.avatar || ME, px, py, PRED.dir, fr, e.name, e.team === "GUARD" ? "#ff5d6c" : "#ffd23f", 0, e.em || 0);
+            }
+          });
+          return;
+        }
+
         activeIds.add(e.id);
         let sm = ENT_SMOOTH.get(e.id);
         if (!sm) {
