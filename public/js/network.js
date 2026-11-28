@@ -2,12 +2,14 @@
   "use strict";
   const { tgw, getUN, setUN, PG, ME, saveCfg, toast, closeSheet } = W.MS_CFG;
 
-  const socket = W.io({
-    transports: ["polling", "websocket"],
-    reconnection: true,
-    reconnectionAttempts: 10,
-    reconnectionDelay: 1000
-  });
+  const socket = typeof W.io === "function"
+    ? W.io({
+        transports: ["websocket", "polling"],
+        reconnection: true,
+        reconnectionAttempts: 10,
+        reconnectionDelay: 1000
+      })
+    : null;
 
   let myTgId = null;
   let currentRoom = null;
@@ -35,8 +37,12 @@
 
   function authenticate() {
     return new Promise((resolve) => {
-      let settled = false;
+      if (!socket) {
+        toast("Socket.io gagal dimuat. Refresh halaman.", "b");
+        return resolve(false);
+      }
 
+      let settled = false;
       const finish = (ok, errMsg) => {
         if (settled) return;
         settled = true;
@@ -46,8 +52,8 @@
       };
 
       const timer = setTimeout(() => {
-        finish(false, "Koneksi ke server lambat. Coba muat ulang.");
-      }, 8000);
+        finish(false, "Koneksi ke server lambat. Tekan Coba Lagi.");
+      }, 7000);
 
       const sendHello = () => {
         const { sp, ...cleanAv } = ME;
@@ -82,6 +88,7 @@
       if (socket.connected) {
         sendHello();
       } else {
+        socket.connect();
         socket.once("connect", sendHello);
         socket.once("connect_error", () => {
           finish(false, "Server sedang offline / gagal terhubung.");
@@ -91,6 +98,7 @@
   }
 
   function createRoom(mode = "CLASSIC", isPublic = true) {
+    if (!socket) return;
     socket.emit("room:create", { mode, isPublic }, (res) => {
       if (res && res.error) toast(res.error, "b");
       else if (res && res.room) handleRoomUpdate(res.room);
@@ -98,7 +106,7 @@
   }
 
   function joinRoom(code) {
-    if (!code) return;
+    if (!socket || !code) return;
     socket.emit("room:join", { code: String(code).toUpperCase().trim() }, (res) => {
       if (res && res.error) toast(res.error, "b");
       else if (res && res.room) handleRoomUpdate(res.room);
@@ -106,7 +114,7 @@
   }
 
   function leaveRoom() {
-    if (!currentRoom) return;
+    if (!socket || !currentRoom) return;
     socket.emit("room:leave", { code: currentRoom.code });
     currentRoom = null;
     latestSnapshot = null;
@@ -114,17 +122,17 @@
   }
 
   function toggleReady() {
-    if (!currentRoom) return;
+    if (!socket || !currentRoom) return;
     socket.emit("room:ready", { code: currentRoom.code });
   }
 
   function updateRoomSettings(settings) {
-    if (!currentRoom) return;
+    if (!socket || !currentRoom) return;
     socket.emit("room:settings", { code: currentRoom.code, ...settings });
   }
 
   function startMatch(fillWithBots = true) {
-    if (!currentRoom) {
+    if (!socket || !currentRoom) {
       toast("Belum masuk ke room", "b");
       return;
     }
@@ -136,12 +144,14 @@
 
   function fetchPublicRooms() {
     return new Promise((resolve) => {
+      if (!socket) return resolve([]);
       socket.emit("room:list", {}, (res) => resolve((res && res.rooms) || []));
     });
   }
 
   function saveCustomizationServer(payload) {
     return new Promise((resolve) => {
+      if (!socket) return resolve(null);
       socket.emit("user:customize", payload, (res) => {
         if (res && res.error) toast(res.error, "b");
         resolve(res);
@@ -150,22 +160,22 @@
   }
 
   function sendChat(text, quickIdx = null) {
-    if (!currentRoom) return;
+    if (!socket || !currentRoom) return;
     socket.emit("room:chat", { code: currentRoom.code, text, quickIdx });
   }
 
   function sendLobbyMove(x, z, dir, em, jy) {
-    if (!currentRoom) return;
+    if (!socket || !currentRoom) return;
     socket.emit("lobby:move", { code: currentRoom.code, x, z, dir, em, jy });
   }
 
   function sendPlayerInput(seq, ix, iy, angle) {
-    if (!currentRoom) return;
+    if (!socket || !currentRoom) return;
     socket.emit("match:input", { code: currentRoom.code, seq, ix, iy, angle });
   }
 
   function sendPlayerAction(action, data = {}) {
-    if (!currentRoom) return;
+    if (!socket || !currentRoom) return;
     socket.emit("match:action", { code: currentRoom.code, action, ...data });
   }
 
@@ -204,124 +214,125 @@
     }
   }
 
-  /* ---------- Listener Event dari RoomManager & GameEngine ---------- */
-  socket.on("room:update", handleRoomUpdate);
-  socket.on("room:updated", handleRoomUpdate);
+  if (socket) {
+    socket.on("room:update", handleRoomUpdate);
+    socket.on("room:updated", handleRoomUpdate);
 
-  socket.on("lobby:peer_move", (d) => {
-    const id = String(d.tgId);
-    if (id === myTgId) return;
-    const p = lobbyPeers.get(id);
-    if (p) {
-      p.tx = d.x;
-      p.tz = d.z;
-      p.dir = d.dir || 0;
-      p.em = d.em || 0;
-      p.jy = d.jy || 0;
-    }
-  });
-
-  socket.on("room:chat_msg", (m) => {
-    const box = document.getElementById("chatLog");
-    if (!box) return;
-    const line = document.createElement("div");
-    line.innerHTML = `<b style="color:var(--ac)">${m.name}:</b> ${m.text}`;
-    box.appendChild(line);
-    box.scrollTop = box.scrollHeight;
-  });
-
-  socket.on("role:assigned", (data) => {
-    latestSnapshot = null;
-    const info = data.roleInfo || {};
-    if (W.MS_APP && W.MS_APP.onMatchStarted) {
-      W.MS_APP.onMatchStarted({
-        role: data.role,
-        roleName: info.name || data.role,
-        team: info.team || "CIVILIAN",
-        quota: data.quota,
-        quotaTier: data.quotaTier || ""
-      });
-    }
-  });
-
-  socket.on("match:snapshot", (snap) => {
-    if (snap && snap.you && Array.isArray(snap.entities)) {
-      const selfEnt = snap.entities.find((e) => String(e.id) === String(snap.you.id));
-      if (selfEnt) {
-        snap.you.x = selfEnt.x;
-        snap.you.z = selfEnt.z;
-        snap.you.dir = selfEnt.dir;
-        snap.you.propType = selfEnt.propType;
+    socket.on("lobby:peer_move", (d) => {
+      const id = String(d.tgId);
+      if (id === myTgId) return;
+      const p = lobbyPeers.get(id);
+      if (p) {
+        p.tx = d.x;
+        p.tz = d.z;
+        p.dir = d.dir || 0;
+        p.em = d.em || 0;
+        p.jy = d.jy || 0;
       }
-      snap.prog = snap.progress ?? snap.prog ?? 0;
-      snap.need = snap.quota ?? snap.need ?? 4;
-      snap.you.abCd = snap.you.abilityCd ?? snap.you.abCd ?? 0;
-      snap.you.dead = snap.you.alive === false;
-    }
-    latestSnapshot = snap;
-  });
+    });
 
-  socket.on("game:toast", (ev) => {
-    if (ev && ev.text) toast(ev.text, ev.type || "i");
-  });
+    socket.on("room:chat_msg", (m) => {
+      const box = document.getElementById("chatLog");
+      if (!box) return;
+      const line = document.createElement("div");
+      line.innerHTML = `<b style="color:var(--ac)">${m.name}:</b> ${m.text}`;
+      box.appendChild(line);
+      box.scrollTop = box.scrollHeight;
+    });
 
-  socket.on("meeting:start", (m) => {
-    if (W.MS_APP && W.MS_APP.onMeetingUpdate) {
-      const list = m.eligible || m.candidates || [];
-      W.MS_APP.onMeetingUpdate({
-        active: true,
-        endTime: m.endTime || (Date.now() + (m.duration || 25) * 1000),
-        callerName: m.callerName || "Pemain",
-        candidates: list,
-        votedCount: m.votedCount || 0,
-        totalVoters: m.totalVoters || list.length,
-        clues: m.clues || [],
-        myId: myTgId
-      });
-    }
-  });
+    socket.on("role:assigned", (data) => {
+      latestSnapshot = null;
+      const info = data.roleInfo || {};
+      if (W.MS_APP && W.MS_APP.onMatchStarted) {
+        W.MS_APP.onMatchStarted({
+          role: data.role,
+          roleName: info.name || data.role,
+          team: info.team || "CIVILIAN",
+          quota: data.quota,
+          quotaTier: data.quotaTier || ""
+        });
+      }
+    });
 
-  socket.on("meeting:update", (m) => {
-    if (W.MS_APP && W.MS_APP.onMeetingUpdate) {
-      const list = m.eligible || m.candidates || [];
-      W.MS_APP.onMeetingUpdate({
-        active: true,
-        endTime: m.endTime || (Date.now() + 25000),
-        callerName: m.callerName || "Pemain",
-        candidates: list,
-        votedCount: m.votedCount || 0,
-        totalVoters: m.totalVoters || list.length,
-        clues: m.clues || [],
-        myId: myTgId
-      });
-    }
-  });
-
-  socket.on("meeting:result", (r) => {
-    if (closeSheet) closeSheet();
-    if (r && r.message) toast(r.message, r.ejectedName ? "g" : "i");
-  });
-
-  socket.on("match:result", (res) => {
-    latestSnapshot = null;
-    if (closeSheet) closeSheet();
-    const meResult = (res.players || []).find((p) => String(p.id) === myTgId) || { won: false, coins: 10, xp: 30 };
-    if (W.MS_APP && W.MS_APP.onMatchResult) {
-      W.MS_APP.onMatchResult({
-        reason: res.reason,
-        players: res.players || [],
-        yourReward: {
-          win: !!meResult.won,
-          coins: meResult.coins || 10,
-          xp: meResult.xp || 30
+    socket.on("match:snapshot", (snap) => {
+      if (snap && snap.you && Array.isArray(snap.entities)) {
+        const selfEnt = snap.entities.find((e) => String(e.id) === String(snap.you.id));
+        if (selfEnt) {
+          snap.you.x = selfEnt.x;
+          snap.you.z = selfEnt.z;
+          snap.you.dir = selfEnt.dir;
+          snap.you.propType = selfEnt.propType;
         }
-      });
-    }
-  });
+        snap.prog = snap.progress ?? snap.prog ?? 0;
+        snap.need = snap.quota ?? snap.need ?? 4;
+        snap.you.abCd = snap.you.abilityCd ?? snap.you.abCd ?? 0;
+        snap.you.dead = snap.you.alive === false;
+      }
+      latestSnapshot = snap;
+    });
 
-  socket.on("error:msg", (msg) => {
-    toast(String(msg || "Terjadi kesalahan"), "b");
-  });
+    socket.on("game:toast", (ev) => {
+      if (ev && ev.text) toast(ev.text, ev.type || "i");
+    });
+
+    socket.on("meeting:start", (m) => {
+      if (W.MS_APP && W.MS_APP.onMeetingUpdate) {
+        const list = m.eligible || m.candidates || [];
+        W.MS_APP.onMeetingUpdate({
+          active: true,
+          endTime: m.endTime || (Date.now() + (m.duration || 25) * 1000),
+          callerName: m.callerName || "Pemain",
+          candidates: list,
+          votedCount: m.votedCount || 0,
+          totalVoters: m.totalVoters || list.length,
+          clues: m.clues || [],
+          myId: myTgId
+        });
+      }
+    });
+
+    socket.on("meeting:update", (m) => {
+      if (W.MS_APP && W.MS_APP.onMeetingUpdate) {
+        const list = m.eligible || m.candidates || [];
+        W.MS_APP.onMeetingUpdate({
+          active: true,
+          endTime: m.endTime || (Date.now() + 25000),
+          callerName: m.callerName || "Pemain",
+          candidates: list,
+          votedCount: m.votedCount || 0,
+          totalVoters: m.totalVoters || list.length,
+          clues: m.clues || [],
+          myId: myTgId
+        });
+      }
+    });
+
+    socket.on("meeting:result", (r) => {
+      if (closeSheet) closeSheet();
+      if (r && r.message) toast(r.message, r.ejectedName ? "g" : "i");
+    });
+
+    socket.on("match:result", (res) => {
+      latestSnapshot = null;
+      if (closeSheet) closeSheet();
+      const meResult = (res.players || []).find((p) => String(p.id) === myTgId) || { won: false, coins: 10, xp: 30 };
+      if (W.MS_APP && W.MS_APP.onMatchResult) {
+        W.MS_APP.onMatchResult({
+          reason: res.reason,
+          players: res.players || [],
+          yourReward: {
+            win: !!meResult.won,
+            coins: meResult.coins || 10,
+            xp: meResult.xp || 30
+          }
+        });
+      }
+    });
+
+    socket.on("error:msg", (msg) => {
+      toast(String(msg || "Terjadi kesalahan"), "b");
+    });
+  }
 
   W.MS_NET = {
     socket,
